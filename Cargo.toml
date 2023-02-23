@@ -8,5 +8,7 @@ edition = "2021"
 [dependencies]
 async-walkdir = "0.2.0"
 futures-lite = "1.12.0"
+image = "0.23"
 imagesize = "0.11.0"
+img_hash = "3.2.0"
 tokio = { version = "1.25.0", features = ["macros", "rt-multi-thread"] }

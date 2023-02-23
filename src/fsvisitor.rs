@@ -1,6 +1,7 @@
-use std::{error::Error, fs::File, io::BufReader, path::Path};
+use std::{error::Error, fs::File, io::{BufReader, Read, Seek}, path::Path};
 
-use imagesize::reader_size;
+use img_hash::{HasherConfig};
+use image::{self, ImageFormat};
 
 pub async fn visit(path: &dyn AsRef<Path>) {
     use async_walkdir::WalkDir;
@@ -13,12 +14,12 @@ pub async fn visit(path: &dyn AsRef<Path>) {
                 match read_image_attributes(&entry.path().into_os_string().into_string().unwrap()) {
                     Ok(_) => {}
                     Err(e) => {
-                        eprintln!("error: {}", e);
+                        eprintln!("error: {} on {:?}", e, entry);
                     }
                 }
             }
             Some(Err(e)) => {
-                eprintln!("error: {}", e);
+                eprintln!("walk error: {}", e);
             }
             None => break,
         }
@@ -26,12 +27,21 @@ pub async fn visit(path: &dyn AsRef<Path>) {
 }
 
 fn read_image_attributes(path: &dyn AsRef<Path>) -> Result<(), Box<dyn Error>> {
-    let reader = BufReader::new(File::open(path)?);
+    let mut reader = BufReader::new(File::open(path)?);
 
     // Two in one go: get img dimensions instead of looking at magic numbers first.
-    let dim = reader_size(reader)?;
+    let dim = imagesize::reader_size(reader.by_ref())?;
+
+    // Retrieve image contents.
+    reader.rewind()?;
+    let img = image::load(reader.by_ref(), ImageFormat::from_path(path)?)?;
+    //let img = image::open(path)?;
+
+    // Get perceptual hash.
+    let hasher = HasherConfig::new().to_hasher();
+    let hash = hasher.hash_image(&img);
 
     // Use what we got.
-    println!("{:?} in {}", dim, path.as_ref().display());
+    println!("{:?} {:?} in {}", dim, hash, path.as_ref().display());
     Ok(())
 }
