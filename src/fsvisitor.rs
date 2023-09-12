@@ -1,7 +1,12 @@
-use std::{error::Error, fs::File, io::{BufReader, Read, Seek}, path::Path};
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufReader, Read, Seek},
+    path::Path,
+};
 
-use img_hash::{HasherConfig};
 use image::{self, ImageFormat};
+use img_hash::HasherConfig;
 
 pub async fn visit(path: &dyn AsRef<Path>) {
     use async_walkdir::WalkDir;
@@ -26,6 +31,21 @@ pub async fn visit(path: &dyn AsRef<Path>) {
     }
 }
 
+pub fn visit_sync(path: &dyn AsRef<Path>) {
+    use walkdir::WalkDir;
+
+    for entry in WalkDir::new(path) {
+        //println!("{}", entry.unwrap().path().display());
+        let entry = entry.as_ref();
+        match read_image_attributes(&entry.unwrap().path().to_string_lossy().into_owned()) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("error: {} on {:?}", e, entry);
+            }
+        }
+    }
+}
+
 fn read_image_attributes(path: &dyn AsRef<Path>) -> Result<(), Box<dyn Error>> {
     let mut reader = BufReader::new(File::open(path)?);
 
@@ -42,6 +62,6 @@ fn read_image_attributes(path: &dyn AsRef<Path>) -> Result<(), Box<dyn Error>> {
     let hash = hasher.hash_image(&img);
 
     // Use what we got.
-    println!("{:?} {:?} in {}", dim, hash, path.as_ref().display());
+    println!("{:?} {:02x?} in {}", dim, hash, path.as_ref().display());
     Ok(())
 }

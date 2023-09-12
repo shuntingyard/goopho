@@ -5,10 +5,18 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.dev]
+opt-level = 3 # Run about as fast as 'release'.
+
+[profile.release]
+debug = 1
+
 [dependencies]
+argh = "0.1.10"
 async-walkdir = "0.2.0"
 futures-lite = "1.12.0"
 image = "0.23"
 imagesize = "0.11.0"
 img_hash = "3.2.0"
 tokio = { version = "1.25.0", features = ["macros", "rt-multi-thread"] }
+walkdir = "2.3.2"

@@ -1,7 +1,26 @@
-use goopho::fsvisitor::visit;
+use argh::FromArgs;
+
+use goopho::fsvisitor::{visit, visit_sync};
+
+#[derive(FromArgs)]
+/// Traverse directories for goopho
+struct CmdlArgs {
+    /// where to start
+    #[argh(positional)]
+    path: String,
+
+    /// async traversal
+    #[argh(switch, short = 'a')]
+    go_async: bool,
+}
 
 #[tokio::main]
 async fn main() {
-    let path = std::env::args().nth(1).expect("Arg1 must be filepath");
-    visit(&path).await;
+    let args: CmdlArgs = argh::from_env();
+
+    if args.go_async {
+        visit(&args.path).await;
+    } else {
+        visit_sync(&args.path);
+    }
 }
