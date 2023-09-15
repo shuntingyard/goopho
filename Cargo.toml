@@ -12,11 +12,14 @@ opt-level = 3 # Run about as fast as 'release'.
 debug = 1
 
 [dependencies]
-argh = "0.1.10"
+async-trait = "0.1.73"
 async-walkdir = "0.2.0"
-futures-lite = "1.12.0"
-image = "0.23"
-imagesize = "0.11.0"
-img_hash = "3.2.0"
-tokio = { version = "1.25.0", features = ["macros", "rt-multi-thread"] }
-walkdir = "2.3.2"
+clap = { version = "4.4.3", features = ["derive"] }
+futures-lite = "1.13.0"
+image = "0.23"		# Using old version to interoperate with `img_hash`.
+img_hash = "3.2.0" 	# For now to be kept available for testing.
+sqlx = { version = "0.7.1", features = ["runtime-tokio-rustls", "sqlite"] }
+time = "0.3.28"
+tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
