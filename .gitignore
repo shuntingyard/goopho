@@ -8,5 +8,5 @@ flamegraph*
 */venv
 *.pickle
 *.pyc
-*.sl3
+*.sl3*
 */requirements.txt

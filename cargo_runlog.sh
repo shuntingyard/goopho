@@ -1,2 +1,2 @@
 #!/bin/sh
-RUST_LOG=debug,sqlx=trace cargo r -- "$@"
+RUST_LOG=debug,goopho::persistence=trace,sqlx=info cargo run -- "$@"
