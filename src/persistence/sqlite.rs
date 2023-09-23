@@ -1,5 +1,6 @@
 //! The persistence store implementation for Sqlite3
 
+use std::mem::transmute;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -30,7 +31,9 @@ impl Store for SqliteStore {
         } else {
             // Image not seen so far, we DO insert.
             sqlx::query(
-                "insert into image (mtime, url, inserted) values ($1, $2, datetime('now'))",
+                r#"
+                insert into image (mtime, url, inserted) values ($1, $2, datetime('now'))
+                "#,
             )
             .bind(&mtime.to_string())
             .bind(url.to_string_lossy())
@@ -46,13 +49,17 @@ impl Store for SqliteStore {
         for calc in calculated {
             match calc {
                 Calculation::Dhash(dhash) => {
-                    sqlx::query("insert into dhash (image_id, dhash, inserted) values ($1, $2, datetime('now'))")
-                        .bind(image_id)
-                        .bind(dhash as i64) // TODO Think again if this coercion has any bad side
-                        // effects, e.g. dumping from Sqlite and storing in Postgresql?
-                        .execute(&self.pool)
-                        .await
-                        .unwrap();
+                    sqlx::query(
+                        r#"
+                        insert into dhash (image_id, dhash, inserted) values ($1, $2, datetime('now'))
+                        "#,
+                    )
+                    .bind(image_id)
+                    .bind(unsafe {transmute::<u64,i64>(dhash)}) // TODO Think again if this coercion has any bad side
+                    // effects, e.g. dumping from Sqlite and storing in Postgresql?
+                    .execute(&self.pool)
+                    .await
+                    .unwrap();
                 }
                 Calculation::Thumbnail => {}
             }
@@ -71,13 +78,17 @@ impl Store for SqliteStore {
 
         if let Some(rowid) = rowid {
             // If so, check for the detail requested.
-            sqlx::query("select image_id from $1 where image_id == $2")
-                .bind(table.as_ref())
-                .bind(rowid)
-                .fetch_optional(&self.pool)
-                .await
-                .unwrap()
-                .is_some()
+            sqlx::query(
+                r#"
+                select image_id from $1 where image_id == $2
+                "#,
+            )
+            .bind(table.as_ref())
+            .bind(rowid)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap()
+            .is_some()
         } else {
             false
         }
@@ -111,12 +122,16 @@ impl SqliteStore {
 
     /// Modularization: we only code existence check and retrieval of `rowid` for `image` once, here!
     async fn get_some_image_rowid(&self, mtime: time::OffsetDateTime, url: &Path) -> Option<i64> {
-        let row = sqlx::query("select rowid from image where mtime == $1 and url == $2")
-            .bind(&mtime.to_string())
-            .bind(&url.to_string_lossy())
-            .fetch_optional(&self.pool)
-            .await
-            .unwrap();
+        let row = sqlx::query(
+            r#"
+            select rowid from image where mtime == $1 and url == $2
+            "#,
+        )
+        .bind(&mtime.to_string())
+        .bind(&url.to_string_lossy())
+        .fetch_optional(&self.pool)
+        .await
+        .unwrap();
 
         if let Some(rowid) = row {
             let rowid: i64 = rowid.try_get(0).unwrap();
