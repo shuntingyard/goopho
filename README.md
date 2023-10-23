@@ -1,37 +1,27 @@
 # goopho
 
-Control which of your photos to store in Google's cloud and keep backups of same
-up-to-date locally and manage duplicates
+Google Photos? Get them down to your disk.
 
-Available for Linux and Windows
+Tested on Linux and Windows
 
-## Appendig A - Google API Details
+## Operation
 
-tbd
+Currently you need to:
 
-## Appendig B - Image Identification
+- Clone it from Github (`git clone --depth=1 https://github.com/shuntingyard/goopho.git`),
+- [install Rust(https://www.rust-lang.org/)] and build a binary
+- and define your own Google app with scope `https://www.googleapis.com/auth/photoslibrary.readonly`.
 
-tbd (Exif, temporal, ...)
+Then do someting like
 
-## Appendix C - Perceptual Hashing
+```bash
+time RUST_LOG=info cargo r
+```
 
-<https://pyimagesearch.com/2017/11/27/image-hashing-opencv-python/>
+on Linux or
 
-<https://pyimagesearch.com/2019/08/26/building-an-image-hashing-search-engine-with-vp-trees-and-opencv/>
+```ps1
+...
+```
 
-Some consideration must go to handling image distances:
-
-* Are vp-trees the best solution to do this?
-* Can distances be updated using incremental computing? (probably not
-
-## Development Actions
-
-* [x] Make Store a (async) trait.
-* [x] Write a simple StdoutStore.
-* [x] Look into file metadata (mtime, size (fs::metadata::len), ...)
-* [ ] Exif?
-* [ ] Maybe make a synchronous walker available - for experimentation!
-* [x] Define a (queueable) calculator fn type for scheduling multiple calculations.
-* [ ] Optionally allow links in walks.
-* [ ] Set a better default for `goopho.sl3`
-* [ ] Implement the SqliteStore.
+on Windows.

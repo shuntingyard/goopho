@@ -1,12 +1,5 @@
 /target
-/Cargo.lock
 
 # Project stuff
 perf.data*
 flamegraph*
-*/101_ObjectCategories
-*/venv
-*.pickle
-*.pyc
-*.sl3*
-*/requirements.txt
