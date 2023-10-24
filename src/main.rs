@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use anyhow::{bail, Context};
 use argh::FromArgs;
 use google_photoslibrary1 as photoslibrary1;
-use microxdg::{Xdg, XdgApp};
+use microxdg::Xdg;
 use photoslibrary1::{
-    api::ListMediaItemsResponse, chrono::NaiveDate, hyper, hyper_rustls, oauth2, Error,
-    PhotosLibrary,
+    api::{ListMediaItemsResponse, MediaItem},
+    chrono::{DateTime, NaiveDate, Utc},
+    hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
 };
 use tokio::fs;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -124,7 +125,13 @@ async fn main() -> anyhow::Result<()> {
                 if !response.status().is_success() {
                     error!("HTTP Not Ok {}...", response.status());
                 } else {
-                    next_page_token = list_batch(list_media_items_response, config.not_older);
+                    let (token_returned, selection) =
+                        select_from_list(list_media_items_response, config.not_older);
+
+                    next_page_token = token_returned;
+                    if selection.len() > 0 {
+                        dbg!(selection);
+                    }
                 }
             }
         }
@@ -136,49 +143,82 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn list_batch(lmir: ListMediaItemsResponse, not_older: Option<NaiveDate>) -> Option<String> {
-    if let Some(items) = lmir.media_items {
-        let mut count: u8 = 0;
-        let mut files: u8 = 0;
+#[derive(Debug)]
+enum Selection {
+    // id, filename, mime-type
+    WithCreateTime(String, String, String, DateTime<Utc>),
+    NoCreateTime(String, String, String), // A precaution, don't know if this ever occurs?
+}
+
+fn select_from_list(
+    response: ListMediaItemsResponse,
+    not_older: Option<NaiveDate>,
+) -> (Option<String>, Vec<Selection>) {
+    let mut selection = Vec::<Selection>::new();
+
+    if let Some(items) = response.media_items {
+        let mut total: u8 = 0;
+        let mut selected_dt: u8 = 0;
+        let mut skipped_dt: u8 = 0;
+        let mut no_dt: u8 = 0;
+        let mut incomplete: u8 = 0;
 
         items.iter().for_each(|item| {
-            count += 1;
-            if item.filename.is_some() {
-                files += 1;
-
-                if not_older.is_some()
-                    && item.media_metadata.as_ref().is_some()
-                    && item
-                        .media_metadata
-                        .as_ref()
-                        .unwrap()
-                        .creation_time
-                        .is_some()
-                {
-                    // There's a way to select on creation date.
-                    if item
-                        .media_metadata
-                        .as_ref()
-                        .unwrap()
-                        .creation_time
-                        .unwrap()
-                        .date_naive()
-                        >= not_older.unwrap()
-                    {
-                        println!(
-                            "{} {} {:#?}",
-                            item.media_metadata.as_ref().unwrap().creation_time.unwrap(),
-                            item.filename.as_ref().unwrap(),
-                            item
-                        );
+            total += 1;
+            match item {
+                MediaItem {
+                    base_url: _,
+                    contributor_info: _,
+                    description: _,
+                    filename: Some(filename),
+                    id: Some(id),
+                    media_metadata: Some(metadata),
+                    mime_type: Some(mime_type),
+                    product_url: _,
+                } => match metadata.creation_time {
+                    Some(dt) => match not_older {
+                        Some(limit) => {
+                            if dt.date_naive() >= limit {
+                                selected_dt += 1; // Selected because within limits
+                                selection.push(Selection::WithCreateTime(
+                                    id.to_string(),
+                                    filename.to_string(),
+                                    mime_type.to_string(),
+                                    dt,
+                                ));
+                            } else {
+                                skipped_dt += 1;
+                            }
+                        }
+                        None => {
+                            selected_dt += 1; // Selected as there was no limit
+                            selection.push(Selection::WithCreateTime(
+                                id.to_string(),
+                                filename.to_string(),
+                                mime_type.to_string(),
+                                dt,
+                            ));
+                        }
+                    },
+                    None => {
+                        no_dt += 1;
+                        selection.push(Selection::NoCreateTime(
+                            id.to_string(),
+                            filename.to_string(),
+                            mime_type.to_string(),
+                        ))
                     }
-                } else {
-                    // There is no way to tell, and when in doubt, we select.
-                    println!("{}", item.filename.as_ref().unwrap());
-                };
+                },
+                _ => {
+                    incomplete += 1;
+                    warn!("Incomplete MediaItem: {item:?}")
+                }
             }
         });
-        info!("Batch size: {count}, files: {files}");
+        info!(
+            "Size: {total} selected: {} skip: {skipped_dt} warn: {incomplete}",
+            selected_dt + no_dt
+        );
     }
-    lmir.next_page_token
+    (response.next_page_token, selection)
 }
