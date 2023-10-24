@@ -5,13 +5,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[profile.dev]
-opt-level = 3 # Run about as fast as 'release'.
-
-[profile.release]
-debug = 1
-
 [dependencies]
-tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "signal"] }
+anyhow = "1.0.75"
+argh = "0.1.12"
+google-photoslibrary1 = "*"
+serde_json = "1.0.107"
+tokio = { version = "1.32.0", features = ["fs", "macros", "rt-multi-thread"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }

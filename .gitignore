@@ -3,3 +3,4 @@
 # Project stuff
 perf.data*
 flamegraph*
+client_secret.*
