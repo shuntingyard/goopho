@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use argh::FromArgs;
 use google_photoslibrary1 as photoslibrary1;
+use microxdg::{Xdg, XdgApp};
 use photoslibrary1::{
-    api::{ListMediaItemsResponse, MediaMetadata},
-    chrono::NaiveDate,
-    hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
+    api::ListMediaItemsResponse, chrono::NaiveDate, hyper, hyper_rustls, oauth2, Error,
+    PhotosLibrary,
 };
 use tokio::fs;
 use tracing::{debug, error, info};
@@ -40,26 +40,29 @@ async fn main() -> anyhow::Result<()> {
 
         /// target folder (must *not* exist)
         #[argh(positional)]
-        _target: PathBuf,
+        target: PathBuf,
     }
     let config: Config = argh::from_env();
     debug!("{config:?}");
 
-    //let
+    // Path to token store
+    let data_dir = Xdg::new()?.data()?;
+    let mut store = data_dir;
+    store.push("goopho-tokens.json");
+    let store = store
+        .to_str()
+        .context("Invalid char in path to token store")?;
 
     // Get app secret
     let path = config
         .client_secret
         .to_str()
-        .context("Invalid char in path to client_secret")?;
+        .context("Invalid char in path to client secret")?;
     let client_secret = fs::read_to_string(path).await?;
     let secret: oauth2::ConsoleApplicationSecret = serde_json::from_str(&client_secret)?;
     let app_secret = secret
         .installed
         .context("Wrong client secret format, expected `installed`")?;
-
-    // Token storage module_path
-    let store = "/tmp/goopho_tokens.json";
 
     // Client setup and auth
     let client = hyper::Client::builder().build(
@@ -82,6 +85,11 @@ async fn main() -> anyhow::Result<()> {
     // Ready for the real thing
     let hub = PhotosLibrary::new(client, auth);
     info!("Tokens stored to '{store}'");
+
+    // See about the target directory
+    if fs::metadata(config.target).await.is_ok() {
+        bail!("Target dir exists");
+    }
 
     let mut next_page_token: Option<String> = None;
     loop {
@@ -158,9 +166,10 @@ fn list_batch(lmir: ListMediaItemsResponse, not_older: Option<NaiveDate>) -> Opt
                         >= not_older.unwrap()
                     {
                         println!(
-                            "{} {}",
+                            "{} {} {:#?}",
                             item.media_metadata.as_ref().unwrap().creation_time.unwrap(),
-                            item.filename.as_ref().unwrap()
+                            item.filename.as_ref().unwrap(),
+                            item
                         );
                     }
                 } else {

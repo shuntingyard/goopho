@@ -393,6 +393,7 @@ dependencies = [
  "anyhow",
  "argh",
  "google-photoslibrary1",
+ "microxdg",
  "serde_json",
  "tokio",
  "tracing",
@@ -633,6 +634,12 @@ name = "memchr"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
+
+[[package]]
+name = "microxdg"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c563f248eed39cea5f1b77dc7f32516a023868641c665048389490bde33bac1"
 
 [[package]]
 name = "mime"

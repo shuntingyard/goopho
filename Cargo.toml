@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1.0.75"
 argh = "0.1.12"
 google-photoslibrary1 = "*"
+microxdg = "0.1.0"
 serde_json = "1.0.107"
 tokio = { version = "1.32.0", features = ["fs", "macros", "rt-multi-thread"] }
 tracing = "0.1.37"
