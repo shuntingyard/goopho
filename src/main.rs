@@ -9,11 +9,13 @@ use photoslibrary1::{
     chrono::{DateTime, NaiveDate, Utc},
     hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
 };
-use tokio::fs;
+use tokio::{fs, sync::mpsc};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
+
+const BATCH_SIZE: i32 = 50;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,11 +31,15 @@ async fn main() -> anyhow::Result<()> {
     struct Config {
         /// just show what would be written
         #[argh(switch, short = 'd')]
-        _dry_run: bool,
+        dry_run: bool,
 
-        /// limit age of files to download by year-month-day
-        #[argh(option, short = 'l')]
-        not_older: Option<NaiveDate>,
+        /// don't select media files created earlier (year-month-day)
+        #[argh(option, short = 'f')]
+        from_date: Option<NaiveDate>,
+
+        /// don't select media files created later
+        #[argh(option, short = 't')]
+        _to_date: Option<NaiveDate>,
 
         /// path to client secret file (the one you got from Google)
         #[argh(option, short = 'c')]
@@ -82,27 +88,51 @@ async fn main() -> anyhow::Result<()> {
     .persist_tokens_to_disk(store)
     .build()
     .await?;
+    info!("Tokens stored to '{store}'");
 
     // Ready for the real thing
     let hub = PhotosLibrary::new(client, auth);
-    info!("Tokens stored to '{store}'");
 
     // See about the target directory
-    if fs::metadata(config.target).await.is_ok() {
+    if fs::metadata(&config.target).await.is_ok() {
         bail!("Target dir exists");
     }
 
+    // Channel to writers
+    let (transmit_to_write, mut write_request) = mpsc::channel::<Selection>(BATCH_SIZE as usize);
+
+    // Schedule disk writes
+    let writer = tokio::spawn(async move {
+        while let Some(item) = write_request.recv().await {
+            let filename = match item {
+                Selection::WithCreateTime(_, n, _, _) => n,
+                Selection::NoCreateTime(_, n, _) => n,
+            };
+            let mut path = config.target.clone();
+
+            let write_thread = tokio::spawn(async move {
+                path.push(&filename);
+                if config.dry_run {
+                    println!("pretenting write to {path:?}");
+                }
+            });
+            write_thread.await.unwrap();
+        }
+    });
+
+    // Loop through Google Photos
     let mut next_page_token: Option<String> = None;
     loop {
+        // First list in batches
         let result = if next_page_token.as_ref().is_some() {
             hub.media_items()
                 .list()
                 .page_token(&next_page_token.clone().unwrap())
-                .page_size(100)
+                .page_size(BATCH_SIZE)
                 .doit()
                 .await
         } else {
-            hub.media_items().list().page_size(100).doit().await
+            hub.media_items().list().page_size(BATCH_SIZE).doit().await
         };
 
         match result {
@@ -126,24 +156,31 @@ async fn main() -> anyhow::Result<()> {
                     error!("HTTP Not Ok {}...", response.status());
                 } else {
                     let (token_returned, selection) =
-                        select_from_list(list_media_items_response, config.not_older);
+                        select_from_list(list_media_items_response, config.from_date);
 
                     next_page_token = token_returned;
-                    if selection.len() > 0 {
-                        dbg!(selection);
+                    for item in selection {
+                        transmit_to_write.send(item.to_owned()).await?;
                     }
                 }
             }
         }
         if next_page_token.is_none() {
+            drop(transmit_to_write); // Close this end of the channel.
             break;
         }
+
+        // TODO: Get media files in batches and put them on the queue.
+        //
     }
+
+    // Be patient, don't quit.
+    writer.await?;
 
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 enum Selection {
     // id, filename, mime-type
     WithCreateTime(String, String, String, DateTime<Utc>),
