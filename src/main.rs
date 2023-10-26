@@ -19,15 +19,15 @@ const BATCH_SIZE: i32 = 50;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Subscribe to traces.
+    // Subscribe to traces
     tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env()) // Read trace levels from RUST_LOG env var.
+        .with(EnvFilter::from_default_env()) // Read trace levels from RUST_LOG env var
         .init();
 
     // Command line args used
     #[derive(FromArgs, Debug)]
-    /// get images and videos from Google Photos
+    /// Download images and videos from Google Photos
     struct Config {
         /// just show what would be written
         #[argh(switch, short = 'd')]
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
 
         /// don't select media files created later
         #[argh(option, short = 't')]
-        _to_date: Option<NaiveDate>,
+        to_date: Option<NaiveDate>,
 
         /// path to client secret file (the one you got from Google)
         #[argh(option, short = 'c')]
@@ -53,8 +53,8 @@ async fn main() -> anyhow::Result<()> {
     debug!("{config:?}");
 
     // Path to token store
-    let data_dir = Xdg::new()?.data()?;
-    let mut store = data_dir;
+    let home_data = Xdg::new()?.data()?;
+    let mut store = home_data;
     store.push("goopho-tokens.json");
     let store = store
         .to_str()
@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
 
         match result {
             Err(e) => match e {
-                // The Error enum provides details about what exactly happened.
+                // The Error enum provides details about what exactly happened
                 // You can also just use its `Debug`, `Display` or `Error` traits
                 Error::HttpError(_)
                 | Error::Io(_)
@@ -155,8 +155,11 @@ async fn main() -> anyhow::Result<()> {
                 if !response.status().is_success() {
                     error!("HTTP Not Ok {}...", response.status());
                 } else {
-                    let (token_returned, selection) =
-                        select_from_list(list_media_items_response, config.from_date);
+                    let (token_returned, selection) = select_from_list(
+                        list_media_items_response,
+                        config.from_date,
+                        config.to_date,
+                    );
 
                     next_page_token = token_returned;
                     for item in selection {
@@ -166,21 +169,21 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         if next_page_token.is_none() {
-            drop(transmit_to_write); // Close this end of the channel.
+            drop(transmit_to_write); // Close this end of the channel
             break;
         }
 
-        // TODO: Get media files in batches and put them on the queue.
+        // TODO: Get media files in batches and put them on the queue
         //
     }
 
-    // Be patient, don't quit.
+    // Be patient, don't quit
     writer.await?;
 
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Selection {
     // id, filename, mime-type
     WithCreateTime(String, String, String, DateTime<Utc>),
@@ -189,9 +192,11 @@ enum Selection {
 
 fn select_from_list(
     response: ListMediaItemsResponse,
-    not_older: Option<NaiveDate>,
+    from_date: Option<NaiveDate>,
+    to_date: Option<NaiveDate>,
 ) -> (Option<String>, Vec<Selection>) {
     let mut selection = Vec::<Selection>::new();
+    let mut next_page_token = response.next_page_token;
 
     if let Some(items) = response.media_items {
         let mut total: u8 = 0;
@@ -213,42 +218,43 @@ fn select_from_list(
                     mime_type: Some(mime_type),
                     product_url: _,
                 } => match metadata.creation_time {
-                    Some(dt) => match not_older {
-                        Some(limit) => {
-                            if dt.date_naive() >= limit {
-                                selected_dt += 1; // Selected because within limits
-                                selection.push(Selection::WithCreateTime(
-                                    id.to_string(),
-                                    filename.to_string(),
-                                    mime_type.to_string(),
-                                    dt,
-                                ));
-                            } else {
-                                skipped_dt += 1;
-                            }
-                        }
-                        None => {
-                            selected_dt += 1; // Selected as there was no limit
+                    Some(creation_time) => {
+                        let creation_date = creation_time.date_naive();
+                        if from_date.is_some_and(|from_date| creation_date >= from_date)
+                            && to_date.is_some_and(|to_date| creation_date <= to_date)
+                            || (from_date.is_none()
+                                && to_date.is_some_and(|to_date| creation_date <= to_date))
+                            || (to_date.is_none()
+                                && from_date.is_some_and(|from_date| creation_date >= from_date))
+                            || (from_date.is_none() && to_date.is_none())
+                        {
+                            selected_dt += 1; // Selected because within limits
                             selection.push(Selection::WithCreateTime(
                                 id.to_string(),
                                 filename.to_string(),
                                 mime_type.to_string(),
-                                dt,
+                                creation_time,
                             ));
+                        } else {
+                            skipped_dt += 1;
+                            if from_date.is_some_and(|from_date| creation_date < from_date) {
+                                next_page_token = None;
+                            }
                         }
-                    },
+                    }
                     None => {
                         no_dt += 1;
                         selection.push(Selection::NoCreateTime(
                             id.to_string(),
                             filename.to_string(),
                             mime_type.to_string(),
-                        ))
+                        ));
+                        warn!("Found MediaItem without creation time: {item:?}");
                     }
                 },
                 _ => {
                     incomplete += 1;
-                    warn!("Incomplete MediaItem: {item:?}")
+                    warn!("Incomplete MediaItem: {item:?}");
                 }
             }
         });
@@ -257,5 +263,5 @@ fn select_from_list(
             selected_dt + no_dt
         );
     }
-    (response.next_page_token, selection)
+    (next_page_token, selection)
 }

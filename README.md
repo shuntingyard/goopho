@@ -31,5 +31,5 @@ This might easily work on other operating systems. It just has not been tested y
 ## Development TODOs
 
 - [ ] Add (Google) `batch get` code parts.
-- [ ] Does `hub.media_items().list()` guarantee newest-first order?
-- [ ] If so, break after oldest media file selected.
+- [x] Does `hub.media_items().list()` guarantee newest-first order?
+- [x] If so, break after oldest media file selected.
