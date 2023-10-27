@@ -15,7 +15,7 @@ Currently you need to:
 Then on **Linux** run someting like
 
 ```bash
-time RUST_LOG=info cargo r -- -c client_secret.json --from-date 2023-10-23 mediadir
+time RUST_LOG=info cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
 ```
 
 inside the directory you just cloned from Github.
@@ -23,6 +23,7 @@ inside the directory you just cloned from Github.
 Similarly on **Windows**:
 
 ```ps1
+$Env:RUST_LOG="info"; cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
 ...
 ```
 
@@ -30,6 +31,7 @@ This might easily work on other operating systems. It just has not been tested y
 
 ## Development TODOs
 
-- [ ] Add (Google) `batch get` code parts.
+- [ ] Add (Google) `batch get` code parts. (According to docs this is required,
+    However, we'll first try with base URLs retrieved with `list`.)
 - [x] Does `hub.media_items().list()` guarantee newest-first order?
 - [x] If so, break after oldest media file selected.

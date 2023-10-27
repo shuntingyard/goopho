@@ -2,21 +2,21 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context};
 use argh::FromArgs;
+use directories::BaseDirs;
 use google_photoslibrary1 as photoslibrary1;
-use microxdg::Xdg;
 use photoslibrary1::{
     api::{ListMediaItemsResponse, MediaItem},
     chrono::{DateTime, NaiveDate, Utc},
     hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
 };
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::{fs, sync::mpsc};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
-const BATCH_SIZE: i32 = 100;
+const BATCH_SIZE: i32 = 50;
 const QUEUE_DEPTH: usize = 10;
 
 #[tokio::main]
@@ -55,14 +55,22 @@ async fn main() -> anyhow::Result<()> {
     debug!("{config:?}");
 
     // Path to token store
-    let home_data = Xdg::new()?.data()?;
-    let mut store = home_data;
-    store.push("goopho-tokens.json");
-    let store = store
+    let mut _buf;
+    let store;
+    if let Some(base_dirs) = BaseDirs::new() {
+    let home_data = base_dirs.data_local_dir();
+    _buf = home_data.to_owned();
+    _buf.push("goopho-tokens.json");
+    store = _buf
         .to_str()
         .context("Invalid char in path to token store")?;
+    } else {
+        bail!("Something is bad with your home directory");
+    }
 
     // Get app secret
+    //  (It's simply a design choice here, to make this mandatory. Apps like `rclone`
+    //  store this to a config file.)
     let path = config
         .client_secret
         .to_str()
@@ -117,10 +125,10 @@ async fn main() -> anyhow::Result<()> {
             let mut path = config.target.clone();
             let http_cli = client.clone();
 
-            let write_thread = tokio::spawn(async move {
+            //let write_thread = tokio::spawn(async move {
                 path.push(&filename);
                 if config.dry_run {
-                    println!(" Pretenting write to {path:?}");
+                    println!(" Would write to {path:>28?} from {url}");
                 } else {
                     let res = http_cli
                         .get(hyper::Uri::from_str(&url).unwrap())
@@ -134,8 +142,8 @@ async fn main() -> anyhow::Result<()> {
                     let buf = hyper::body::to_bytes(res).await.unwrap();
                     output.write(&buf[..]).await.unwrap();
                 }
-            });
-            write_thread.await.unwrap();
+            //});
+            //write_thread.await.unwrap();
         }
     });
 
@@ -252,6 +260,7 @@ fn select_from_list(
                                 mime_type.to_string(),
                                 creation_time,
                             ));
+                            dbg!(&item);
                         } else {
                             skipped_dt += 1;
                             if from_date.is_some_and(|from_date| creation_date < from_date) {
