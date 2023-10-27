@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context};
 use argh::FromArgs;
@@ -9,13 +9,15 @@ use photoslibrary1::{
     chrono::{DateTime, NaiveDate, Utc},
     hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
 };
+use tokio::io::{self, AsyncWriteExt};
 use tokio::{fs, sync::mpsc};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
-const BATCH_SIZE: i32 = 50;
+const BATCH_SIZE: i32 = 100;
+const QUEUE_DEPTH: usize = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -91,29 +93,46 @@ async fn main() -> anyhow::Result<()> {
     info!("Tokens stored to '{store}'");
 
     // Ready for the real thing
-    let hub = PhotosLibrary::new(client, auth);
+    let hub = PhotosLibrary::new(client.clone(), auth);
 
     // See about the target directory
     if fs::metadata(&config.target).await.is_ok() {
         bail!("Target dir exists");
+    } else {
+        if !config.dry_run {
+            fs::create_dir(&config.target).await?;
+        }
     }
 
     // Channel to writers
-    let (transmit_to_write, mut write_request) = mpsc::channel::<Selection>(BATCH_SIZE as usize);
+    let (transmit_to_write, mut write_request) = mpsc::channel::<Selection>(QUEUE_DEPTH);
 
-    // Schedule disk writes
+    // Schedule downloads and disk writes
     let writer = tokio::spawn(async move {
         while let Some(item) = write_request.recv().await {
-            let filename = match item {
-                Selection::WithCreateTime(_, n, _, _) => n,
-                Selection::NoCreateTime(_, n, _) => n,
+            let (url, filename) = match item {
+                Selection::WithCreateTime(u, n, _m, _d) => (u, n),
+                Selection::NoCreateTime(u, n, _m) => (u, n),
             };
             let mut path = config.target.clone();
+            let http_cli = client.clone();
 
             let write_thread = tokio::spawn(async move {
                 path.push(&filename);
                 if config.dry_run {
-                    println!("pretenting write to {path:?}");
+                    println!(" Pretenting write to {path:?}");
+                } else {
+                    let res = http_cli
+                        .get(hyper::Uri::from_str(&url).unwrap())
+                        .await
+                        .unwrap();
+                    // dbg!(&res);
+
+                    println!(" About to write {path:?}");
+                    // TODO: Improve this with reading in chunks and a buffered writer.
+                    let mut output = fs::File::create(path).await.unwrap();
+                    let buf = hyper::body::to_bytes(res).await.unwrap();
+                    output.write(&buf[..]).await.unwrap();
                 }
             });
             write_thread.await.unwrap();
@@ -148,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
                 | Error::Failure(_)
                 | Error::BadRequest(_)
                 | Error::FieldClash(_)
-                | Error::JsonDecodeError(_, _) => println!("{}", e),
+                | Error::JsonDecodeError(_, _) => error!("{}", e),
             },
             Ok(res) => {
                 let (response, list_media_items_response) = res;
@@ -168,13 +187,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+
         if next_page_token.is_none() {
             drop(transmit_to_write); // Close this end of the channel
             break;
         }
-
-        // TODO: Get media files in batches and put them on the queue
-        //
     }
 
     // Be patient, don't quit
@@ -185,7 +202,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[derive(Clone, Debug)]
 enum Selection {
-    // id, filename, mime-type
+    // base_url, filename, mime-type
     WithCreateTime(String, String, String, DateTime<Utc>),
     NoCreateTime(String, String, String), // A precaution, don't know if this ever occurs?
 }
@@ -209,11 +226,11 @@ fn select_from_list(
             total += 1;
             match item {
                 MediaItem {
-                    base_url: _,
+                    base_url: Some(url),
                     contributor_info: _,
                     description: _,
                     filename: Some(filename),
-                    id: Some(id),
+                    id: _,
                     media_metadata: Some(metadata),
                     mime_type: Some(mime_type),
                     product_url: _,
@@ -230,7 +247,7 @@ fn select_from_list(
                         {
                             selected_dt += 1; // Selected because within limits
                             selection.push(Selection::WithCreateTime(
-                                id.to_string(),
+                                url.to_string(),
                                 filename.to_string(),
                                 mime_type.to_string(),
                                 creation_time,
@@ -245,7 +262,7 @@ fn select_from_list(
                     None => {
                         no_dt += 1;
                         selection.push(Selection::NoCreateTime(
-                            id.to_string(),
+                            url.to_string(),
                             filename.to_string(),
                             mime_type.to_string(),
                         ));
