@@ -3,29 +3,34 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::{bail, Context};
 use argh::FromArgs;
 use directories::BaseDirs;
+use futures::future;
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
     api::{ListMediaItemsResponse, MediaItem},
     chrono::{DateTime, NaiveDate, Utc},
-    hyper, hyper_rustls, oauth2, Error, PhotosLibrary,
+    hyper::{self, body::HttpBody},
+    hyper_rustls, oauth2, Error, PhotosLibrary,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{self, AsyncWriteExt};
 use tokio::{fs, sync::mpsc};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
-const BATCH_SIZE: i32 = 50;
+const BATCH_SIZE: i32 = 25;
 const QUEUE_DEPTH: usize = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Subscribe to traces
+    /*
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env()) // Read trace levels from RUST_LOG env var
         .init();
+     */
+    console_subscriber::init();
 
     // Command line args used
     #[derive(FromArgs, Debug)]
@@ -58,12 +63,12 @@ async fn main() -> anyhow::Result<()> {
     let mut _buf;
     let store;
     if let Some(base_dirs) = BaseDirs::new() {
-    let home_data = base_dirs.data_local_dir();
-    _buf = home_data.to_owned();
-    _buf.push("goopho-tokens.json");
-    store = _buf
-        .to_str()
-        .context("Invalid char in path to token store")?;
+        let home_data = base_dirs.data_local_dir();
+        _buf = home_data.to_owned();
+        _buf.push("goopho-tokens.json");
+        store = _buf
+            .to_str()
+            .context("Invalid char in path to token store")?;
     } else {
         bail!("Something is bad with your home directory");
     }
@@ -106,10 +111,8 @@ async fn main() -> anyhow::Result<()> {
     // See about the target directory
     if fs::metadata(&config.target).await.is_ok() {
         bail!("Target dir exists");
-    } else {
-        if !config.dry_run {
-            fs::create_dir(&config.target).await?;
-        }
+    } else if !config.dry_run {
+        fs::create_dir(&config.target).await?;
     }
 
     // Channel to writers
@@ -117,34 +120,67 @@ async fn main() -> anyhow::Result<()> {
 
     // Schedule downloads and disk writes
     let writer = tokio::spawn(async move {
+        let mut handles = vec![];
+
         while let Some(item) = write_request.recv().await {
+            let _item_to_display = item.clone();
+
+            // None for url in cases where image with or height are None
             let (url, filename) = match item {
-                Selection::WithCreateTime(u, n, _m, _d) => (u, n),
-                Selection::NoCreateTime(u, n, _m) => (u, n),
+                Selection::ImageOrMotionPhotoBaseUrl(url, name, Some(width), Some(height), _) => {
+                    (url + &format!("=w{width}-h{height}"), name)
+                }
+                Selection::ImageOrMotionPhotoBaseUrl(url, name, _, _, _) => {
+                    warn!("No dimensions for {name} - thumnail downloaded");
+                    (url, name)
+                }
+                Selection::VideoBaseUrl(url, name, _) => (url + &format!("=dv"), name),
             };
             let mut path = config.target.clone();
             let http_cli = client.clone();
 
-            //let write_thread = tokio::spawn(async move {
+            let write_thread = tokio::spawn(async move {
                 path.push(&filename);
                 if config.dry_run {
-                    println!(" Would write to {path:>28?} from {url}");
+                    println!("\"dry_run\",{path:?}");
+                    dbg!(url);
+                    // dbg!(_item_to_display);
                 } else {
-                    let res = http_cli
+                    let mut res = http_cli
                         .get(hyper::Uri::from_str(&url).unwrap())
                         .await
                         .unwrap();
                     // dbg!(&res);
 
-                    println!(" About to write {path:?}");
-                    // TODO: Improve this with reading in chunks and a buffered writer.
-                    let mut output = fs::File::create(path).await.unwrap();
-                    let buf = hyper::body::to_bytes(res).await.unwrap();
-                    output.write(&buf[..]).await.unwrap();
+                    // Videos, 302?
+                    if res.status() == 200 {
+                        let mut output = io::BufWriter::new(fs::File::create(&path).await.unwrap());
+                        while let Some(chunk) = res.body_mut().data().await {
+                            output.write_all(&chunk.unwrap()).await.unwrap();
+                        }
+                        println!("Wrote photo {path:?}");
+                    } else if res.status() == 302 {
+                        let location = res.headers().get("location").unwrap().to_str().unwrap();
+                        let mut res = http_cli
+                            .get(hyper::Uri::from_str(location).unwrap())
+                            .await
+                            .unwrap();
+                        if res.status() == 200 {
+                            let mut output =
+                                io::BufWriter::new(fs::File::create(&path).await.unwrap());
+                            while let Some(chunk) = res.body_mut().data().await {
+                                output.write_all(&chunk.unwrap()).await.unwrap();
+                            }
+                            println!("Wrote video {path:?}");
+                        }
+                    } else {
+                        error!("Got http {}", res.status());
+                    }
                 }
-            //});
-            //write_thread.await.unwrap();
+            });
+            handles.push(write_thread);
         }
+        future::join_all(handles).await;
     });
 
     // Loop through Google Photos
@@ -190,6 +226,56 @@ async fn main() -> anyhow::Result<()> {
 
                     next_page_token = token_returned;
                     for item in selection {
+                        /*
+                        let id = match &item {
+                            Selection::ImageOrMotionPhotoBaseUrl(id, ..) => id,
+                            Selection::VideoBaseUrl(id, ..) => id,
+                        };
+                        let result = hub
+                            .media_items()
+                            .get(id)
+                            // .param("alt", "media")
+                            .doit()
+                            .await;
+
+                        match result {
+                            Err(e) => match e {
+                                // The Error enum provides details about what exactly happened
+                                // You can also just use its `Debug`, `Display` or `Error` traits
+                                Error::HttpError(_)
+                                | Error::Io(_)
+                                | Error::MissingAPIKey
+                                | Error::MissingToken(_)
+                                | Error::Cancelled
+                                | Error::UploadSizeLimitExceeded(_, _)
+                                | Error::Failure(_)
+                                | Error::BadRequest(_)
+                                | Error::FieldClash(_)
+                                | Error::JsonDecodeError(_, _) => error!("{}", e),
+                            },
+                            Ok(res) => {
+                                let (response, media_item) = res;
+                                if !response.status().is_success() {
+                                    error!("HTTP Not Ok {}...", response.status());
+                                } else {
+                                    if let Some(url) = media_item.base_url {
+                                        // Enum rewriting crimes
+                                        let item = match item {
+                                            Selection::ImageOrMotionPhotoBaseUrl(_, b, c, d, e) => {
+                                                Selection::ImageOrMotionPhotoBaseUrl(
+                                                    url, b, c, d, e,
+                                                )
+                                            }
+                                            Selection::VideoBaseUrl(_, b, c) => {
+                                                Selection::VideoBaseUrl(url, b, c)
+                                            }
+                                        };
+                                        transmit_to_write.send(item.to_owned()).await?;
+                                    }
+                                } // We don't handle errors redundantly, as a rewite is imminent now!
+                            }
+                        }
+                        */
                         transmit_to_write.send(item.to_owned()).await?;
                     }
                 }
@@ -210,9 +296,16 @@ async fn main() -> anyhow::Result<()> {
 
 #[derive(Clone, Debug)]
 enum Selection {
-    // base_url, filename, mime-type
-    WithCreateTime(String, String, String, DateTime<Utc>),
-    NoCreateTime(String, String, String), // A precaution, don't know if this ever occurs?
+    // URL, filename, width, height, optional creation time
+    ImageOrMotionPhotoBaseUrl(
+        String,
+        String,
+        Option<i64>,
+        Option<i64>,
+        Option<DateTime<Utc>>,
+    ),
+    // URL, filename, optional creation time
+    VideoBaseUrl(String, String, Option<DateTime<Utc>>),
 }
 
 fn select_from_list(
@@ -228,7 +321,7 @@ fn select_from_list(
         let mut selected_dt: u8 = 0;
         let mut skipped_dt: u8 = 0;
         let mut no_dt: u8 = 0;
-        let mut incomplete: u8 = 0;
+        let mut unexpected: u8 = 0;
 
         items.iter().for_each(|item| {
             total += 1;
@@ -240,7 +333,7 @@ fn select_from_list(
                     filename: Some(filename),
                     id: _,
                     media_metadata: Some(metadata),
-                    mime_type: Some(mime_type),
+                    mime_type: _,
                     product_url: _,
                 } => match metadata.creation_time {
                     Some(creation_time) => {
@@ -253,39 +346,81 @@ fn select_from_list(
                                 && from_date.is_some_and(|from_date| creation_date >= from_date))
                             || (from_date.is_none() && to_date.is_none())
                         {
-                            selected_dt += 1; // Selected because within limits
-                            selection.push(Selection::WithCreateTime(
-                                url.to_string(),
-                                filename.to_string(),
-                                mime_type.to_string(),
-                                creation_time,
-                            ));
-                            dbg!(&item);
+                            // Photos
+                            if metadata.photo.is_some() {
+                                selected_dt += 1; // Selected because within limits
+                                selection.push(Selection::ImageOrMotionPhotoBaseUrl(
+                                    url.to_string(),
+                                    filename.to_string(),
+                                    metadata.width,
+                                    metadata.height,
+                                    Some(creation_time),
+                                ));
+                            }
+                            // Video
+                            else if metadata.video.is_some() {
+                                selected_dt += 1; // Selected because within limits
+                                selection.push(Selection::VideoBaseUrl(
+                                    url.to_string(),
+                                    filename.to_string(),
+                                    Some(creation_time),
+                                ));
+                            }
+                            // Don't know (which should't happen)
+                            else {
+                                unexpected += 1;
+                                warn!("Unexpected MediaItem: {item:?}");
+                            }
+
+                            // dbg!(&item);
                         } else {
                             skipped_dt += 1;
+                            // End list!
                             if from_date.is_some_and(|from_date| creation_date < from_date) {
                                 next_page_token = None;
                             }
                         }
                     }
                     None => {
-                        no_dt += 1;
-                        selection.push(Selection::NoCreateTime(
-                            url.to_string(),
-                            filename.to_string(),
-                            mime_type.to_string(),
-                        ));
+                        // Photos
+                        if metadata.photo.is_some() {
+                            no_dt += 1;
+                            selection.push(Selection::ImageOrMotionPhotoBaseUrl(
+                                url.to_string(),
+                                filename.to_string(),
+                                metadata.width,
+                                metadata.height,
+                                None,
+                            ));
+                        }
+                        // Video
+                        else if metadata.video.is_some() {
+                            no_dt += 1;
+                            selected_dt += 1; // Selected because within limits
+                            selection.push(Selection::VideoBaseUrl(
+                                url.to_string(),
+                                filename.to_string(),
+                                None,
+                            ));
+                        }
+                        // Don't know (which should't happen)
+                        else {
+                            unexpected += 1;
+                            warn!("Unexpected (neither photo nor video) MediaItem: {item:?}");
+                        }
+
+                        // dbg!(&item);
                         warn!("Found MediaItem without creation time: {item:?}");
                     }
                 },
                 _ => {
-                    incomplete += 1;
-                    warn!("Incomplete MediaItem: {item:?}");
+                    unexpected += 1;
+                    warn!("Unexpected (some attributes don't match) MediaItem: {item:?}");
                 }
             }
         });
         info!(
-            "Size: {total} selected: {} skip: {skipped_dt} warn: {incomplete}",
+            "Size: {total} selected: {} skip: {skipped_dt} warn: {unexpected}",
             selected_dt + no_dt
         );
     }
