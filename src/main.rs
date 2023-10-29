@@ -1,3 +1,5 @@
+//! What to describe here?
+
 use anyhow::{bail, Context};
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{hyper, hyper_rustls, oauth2, PhotosLibrary};
@@ -11,6 +13,7 @@ mod config;
 mod download;
 mod hub;
 
+const BATCH_SIZE: i32 = 50;
 const QUEUE_DEPTH: usize = 10;
 
 #[tokio::main]
@@ -62,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
     let hub = PhotosLibrary::new(client.clone(), auth);
 
     // See about the target directory
+    //  TODO: Only run  this code before actually writing
     if fs::metadata(&args.target).await.is_ok() {
         bail!("Target dir exists");
     } else if !args.dry_run {
@@ -71,14 +75,22 @@ async fn main() -> anyhow::Result<()> {
     // Channel to writers
     let (transmit_to_write, write_request) = mpsc::channel::<hub::Selection>(QUEUE_DEPTH);
 
-    // Setup for downloads
+    // Set up the channel's receiving side for downloads and disk writes
+    //  (Manages its own join handles internally)
     let writer = download::photos_to_disk(write_request, args.target, client, args.dry_run).await;
 
-    // Loop through Google Photos
-    hub::hubby(hub, transmit_to_write, args.from_date, args.to_date).await?;
+    // Start selecting media files to download
+    hub::select_media_and_send(
+        hub,
+        transmit_to_write,
+        args.from_date,
+        args.to_date,
+        BATCH_SIZE,
+    )
+    .await?;
 
     // Be patient, don't quit
-    writer.await?;
-
+    // And don't forget to treat outer (?) as well as inner (?) results
+    writer.await??;
     Ok(())
 }

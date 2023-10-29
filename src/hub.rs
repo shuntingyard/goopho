@@ -1,6 +1,5 @@
 //! Selection of media files to process
 
-use anyhow::Result;
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
     api::{ListMediaItemsResponse, MediaItem},
@@ -11,8 +10,6 @@ use photoslibrary1::{
 };
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
-
-const BATCH_SIZE: i32 = 25;
 
 #[derive(Clone, Debug)]
 pub enum Selection {
@@ -28,12 +25,13 @@ pub enum Selection {
     VideoBaseUrl(String, String, Option<DateTime<Utc>>),
 }
 
-pub async fn hubby(
+pub async fn select_media_and_send(
     hub: PhotosLibrary<HttpsConnector<HttpConnector>>,
     transmit_to_write: mpsc::Sender<Selection>,
     from_date: Option<NaiveDate>,
     to_date: Option<NaiveDate>,
-) -> Result<()> {
+    batch_size: i32,
+) -> anyhow::Result<()> {
     // Loop through Google Photos
     let mut next_page_token: Option<String> = None;
     loop {
@@ -42,11 +40,11 @@ pub async fn hubby(
             hub.media_items()
                 .list()
                 .page_token(&next_page_token.clone().unwrap())
-                .page_size(BATCH_SIZE)
+                .page_size(batch_size)
                 .doit()
                 .await
         } else {
-            hub.media_items().list().page_size(BATCH_SIZE).doit().await
+            hub.media_items().list().page_size(batch_size).doit().await
         };
 
         match result {

@@ -8,8 +8,12 @@ use photoslibrary1::{
     hyper::{self, body::HttpBody, client::HttpConnector},
     hyper_rustls::HttpsConnector,
 };
-use tokio::io::{self, AsyncWriteExt};
-use tokio::{fs, sync::mpsc};
+use tokio::{
+    fs,
+    io::{self, AsyncWriteExt},
+    sync::mpsc,
+    task::JoinHandle,
+};
 use tracing::{error, warn};
 
 use crate::hub::Selection;
@@ -19,7 +23,7 @@ pub async fn photos_to_disk(
     download_dir: PathBuf,
     client: hyper::Client<HttpsConnector<HttpConnector>>,
     is_dry_run: bool,
-) -> tokio::task::JoinHandle<()> {
+) -> JoinHandle<anyhow::Result<()>> {
     // Schedule downloads and disk writes
     tokio::spawn(async move {
         let mut handles = vec![];
@@ -41,37 +45,30 @@ pub async fn photos_to_disk(
             let mut path = download_dir.clone();
             let http_cli = client.clone();
 
-            let write_thread = tokio::spawn(async move {
+            let write_thread: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
                 path.push(&filename);
                 if is_dry_run {
                     println!("\"dry_run\",{path:?}");
                     dbg!(url);
                     // dbg!(_item_to_display);
                 } else {
-                    let mut res = http_cli
-                        .get(hyper::Uri::from_str(&url).unwrap())
-                        .await
-                        .unwrap();
+                    let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
                     // dbg!(&res);
 
                     // Videos, 302?
                     if res.status() == 200 {
-                        let mut output = io::BufWriter::new(fs::File::create(&path).await.unwrap());
+                        let mut output = io::BufWriter::new(fs::File::create(&path).await?);
                         while let Some(chunk) = res.body_mut().data().await {
-                            output.write_all(&chunk.unwrap()).await.unwrap();
+                            output.write_all(&chunk?).await?;
                         }
                         println!("Wrote photo {path:?}");
                     } else if res.status() == 302 {
-                        let location = res.headers().get("location").unwrap().to_str().unwrap();
-                        let mut res = http_cli
-                            .get(hyper::Uri::from_str(location).unwrap())
-                            .await
-                            .unwrap();
+                        let location = res.headers().get("location").unwrap().to_str()?;
+                        let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
                         if res.status() == 200 {
-                            let mut output =
-                                io::BufWriter::new(fs::File::create(&path).await.unwrap());
+                            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
                             while let Some(chunk) = res.body_mut().data().await {
-                                output.write_all(&chunk.unwrap()).await.unwrap();
+                                output.write_all(&chunk?).await?;
                             }
                             println!("Wrote video {path:?}");
                         }
@@ -79,9 +76,14 @@ pub async fn photos_to_disk(
                         error!("Got http {}", res.status());
                     }
                 }
+
+                Ok(())
             });
+
             handles.push(write_thread);
         }
-        future::join_all(handles).await;
+
+        future::try_join_all(handles).await?;
+        Ok(())
     })
 }
