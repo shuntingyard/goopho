@@ -12,11 +12,12 @@ opt-level = "z"
 [dependencies]
 anyhow = "1.0.75"
 argh = "0.1.12"
-console-subscriber = "0.2.0"
+# console-subscriber = "0.2.0" # Use with `RUSTFLAGS="--cfg tokio_unstable"`
 directories = "5.0.1"
 futures = "0.3.29"
 google-photoslibrary1 = "*"
 serde_json = "1.0.107"
 tokio = { version = "1.32.0", features = ["fs", "macros", "rt-multi-thread", "tracing"] }
 tracing = "0.1.37"
+tracing-indicatif = "0.3.5"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }

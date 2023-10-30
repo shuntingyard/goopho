@@ -14,9 +14,9 @@ use tracing::{error, info, warn};
 /// Attributes of `MediaItem` to download
 #[derive(Clone, Debug)]
 pub enum MediaAttr {
-    // URL, filename, width, height, optional creation time
+    // URL, filename, width, height, creation time
     ImageOrMotionPhotoBaseUrl(String, String, i64, i64, DateTime<Utc>),
-    // URL, filename, optional creation time
+    // URL, filename, creation time
     VideoBaseUrl(String, String, DateTime<Utc>),
 }
 
@@ -68,56 +68,6 @@ pub async fn select_media_and_send(
 
                     next_page_token = token_returned;
                     for item in selection {
-                        /*
-                        let id = match &item {
-                            Selection::ImageOrMotionPhotoBaseUrl(id, ..) => id,
-                            Selection::VideoBaseUrl(id, ..) => id,
-                        };
-                        let result = hub
-                            .media_items()
-                            .get(id)
-                            // .param("alt", "media")
-                            .doit()
-                            .await;
-
-                        match result {
-                            Err(e) => match e {
-                                // The Error enum provides details about what exactly happened
-                                // You can also just use its `Debug`, `Display` or `Error` traits
-                                Error::HttpError(_)
-                                | Error::Io(_)
-                                | Error::MissingAPIKey
-                                | Error::MissingToken(_)
-                                | Error::Cancelled
-                                | Error::UploadSizeLimitExceeded(_, _)
-                                | Error::Failure(_)
-                                | Error::BadRequest(_)
-                                | Error::FieldClash(_)
-                                | Error::JsonDecodeError(_, _) => error!("{}", e),
-                            },
-                            Ok(res) => {
-                                let (response, media_item) = res;
-                                if !response.status().is_success() {
-                                    error!("HTTP Not Ok {}...", response.status());
-                                } else {
-                                    if let Some(url) = media_item.base_url {
-                                        // Enum rewriting crimes
-                                        let item = match item {
-                                            Selection::ImageOrMotionPhotoBaseUrl(_, b, c, d, e) => {
-                                                Selection::ImageOrMotionPhotoBaseUrl(
-                                                    url, b, c, d, e,
-                                                )
-                                            }
-                                            Selection::VideoBaseUrl(_, b, c) => {
-                                                Selection::VideoBaseUrl(url, b, c)
-                                            }
-                                        };
-                                        transmit_to_write.send(item.to_owned()).await?;
-                                    }
-                                } // We don't handle errors redundantly, as a rewite is imminent now!
-                            }
-                        }
-                        */
                         transmit_to_write.send(item.to_owned()).await?;
                     }
                 }
@@ -167,7 +117,7 @@ fn select_from_list(
                         creation_time: Some(creation_time),
                         ..
                     } => {
-                        // Do creation time selection
+                        // Do creation time selection if desired
                         let creation_date = creation_time.date_naive();
                         if from_date.is_some_and(|from_date| creation_date >= from_date)
                             && to_date.is_some_and(|to_date| creation_date <= to_date)
@@ -176,6 +126,7 @@ fn select_from_list(
                             || (to_date.is_none()
                                 && from_date.is_some_and(|from_date| creation_date >= from_date))
                             || (from_date.is_none() && to_date.is_none())
+                        // Select all
                         {
                             match metadata {
                                 MediaMetadata {
@@ -217,7 +168,7 @@ fn select_from_list(
                             }
                         } else {
                             skipped_dt += 1;
-                            // End list!
+                            // End list early!
                             if from_date.is_some_and(|from_date| creation_date < from_date) {
                                 next_page_token = None;
                             }

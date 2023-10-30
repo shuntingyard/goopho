@@ -20,10 +20,12 @@ pub struct Cmdlargs {
     #[argh(switch, short = 'd')]
     pub dry_run: bool,
 
+    /* Not sure if we ever want to implement this?
+     *
     /// persist creation date from Google Photos to disk
     #[argh(switch, long = "pcd")]
     pub persist_creation_date: bool,
-
+     */
     /// don't select media files created earlier (year-month-day)
     #[argh(option, short = 'f')]
     pub from_date: Option<NaiveDate>,

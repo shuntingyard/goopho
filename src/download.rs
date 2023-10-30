@@ -15,6 +15,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::error;
+use tracing::instrument;
 
 use crate::hub::MediaAttr;
 
@@ -45,29 +46,7 @@ pub async fn photos_to_disk(
                 if is_dry_run {
                     println!("dry_run,\"{creation_time}\",{path:?}");
                 } else {
-                    let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
-                    // dbg!(&res);
-
-                    // Videos, 302?
-                    if res.status() == 200 {
-                        let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-                        while let Some(chunk) = res.body_mut().data().await {
-                            output.write_all(&chunk?).await?;
-                        }
-                        println!("Wrote photo {path:?}");
-                    } else if res.status() == 302 {
-                        let location = res.headers().get("location").unwrap().to_str()?;
-                        let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
-                        if res.status() == 200 {
-                            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-                            while let Some(chunk) = res.body_mut().data().await {
-                                output.write_all(&chunk?).await?;
-                            }
-                            println!("Wrote video {path:?}");
-                        }
-                    } else {
-                        error!("Got http {}", res.status());
-                    }
+                    download_and_write(http_cli, url, path).await?;
                 }
 
                 Ok(())
@@ -79,4 +58,38 @@ pub async fn photos_to_disk(
         future::try_join_all(handles).await?;
         Ok(())
     })
+}
+
+/// Used with progress indicator
+#[instrument(name = "downloading", skip(http_cli, url))]
+async fn download_and_write(
+    http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
+    url: String,
+    path: PathBuf,
+) -> anyhow::Result<()> {
+    let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
+    // dbg!(&res);
+
+    // Videos, 302?
+    if res.status() == 200 {
+        let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+        while let Some(chunk) = res.body_mut().data().await {
+            output.write_all(&chunk?).await?;
+        }
+        // eprintln!("Wrote photo {path:?}");
+    } else if res.status() == 302 {
+        let location = res.headers().get("location").unwrap().to_str()?;
+        let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
+        if res.status() == 200 {
+            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+            while let Some(chunk) = res.body_mut().data().await {
+                output.write_all(&chunk?).await?;
+            }
+            // eprintln!("Wrote video {path:?}");
+        }
+    } else {
+        error!("Got http {}", res.status());
+    }
+
+    Ok(())
 }

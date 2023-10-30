@@ -5,9 +5,8 @@ use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{hyper, hyper_rustls, oauth2, PhotosLibrary};
 use tokio::{fs, sync::mpsc};
 use tracing::{debug, info};
-use tracing_subscriber::{
-    fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
-};
+use tracing_indicatif::IndicatifLayer;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod config;
 mod download;
@@ -18,14 +17,15 @@ const QUEUE_DEPTH: usize = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Subscribe to traces
-    /*
+    // Subscribe to traces and progress indicator
+    let indicatif_layer = IndicatifLayer::new();
     tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env()) // Read trace levels from RUST_LOG env var
+        .with(fmt::layer().with_writer(indicatif_layer.get_stderr_writer()))
+        .with(EnvFilter::from_default_env()) // Use RUST_LOG env var
+        .with(indicatif_layer)
         .init();
-     */
-    console_subscriber::init();
+
+    // console_subscriber::init();
 
     // Get command line args
     let args: config::Cmdlargs = argh::from_env();
@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     // Be patient, don't quit
-    // And don't forget to treat outer (?) as well as inner (?) results
+    //  (?? is for propagating outer as well as inner results)
     writer.await??;
     Ok(())
 }
