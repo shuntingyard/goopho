@@ -39,7 +39,10 @@ This might easily work on other operating systems. It just has not been tested y
 - [x] Does `hub.media_items().list()` guarantee newest-first order?
 - [x] If so, break after oldest media file selected.
 - [ ] Look at distorted pics. Do we happen to write more than once to some files?
+- [ ] Use [rust-binary-action](https://github.com/marketplace/actions/build-and-upload-rust-binary-to-github-releases)
+    on releases?
 - [ ] Test with DNS down
 - [ ] Test hub module while taking link down.
 - [ ] Test download module while taking link down.
 - [ ] Optionally download Motion GIFs as videos?
+- [ ] asciinema sample?
