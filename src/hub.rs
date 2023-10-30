@@ -293,10 +293,7 @@ fn _select_from_list_better(
             } => match metadata {
                 MediaMetadata {
                     creation_time: Some(_creation_time),
-                    height: _,
-                    photo: _,
-                    video: _,
-                    width: _,
+                    ..
                 } => match metadata {
                     // Do creation time selection
                     MediaMetadata {
@@ -314,7 +311,7 @@ fn _select_from_list_better(
                         width: None,
                     } => {}
                     _ => {
-                        warn!("Refused to match neither photo nor video {metadata:?}");
+                        warn!("Refused to match without some photo or video {metadata:?}");
                     }
                 },
                 _ => {
