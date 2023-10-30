@@ -15,24 +15,9 @@ use tracing::{error, info, warn};
 #[derive(Clone, Debug)]
 pub enum MediaAttr {
     // URL, filename, width, height, optional creation time
-    ImageOrMotionPhotoBaseUrl(
-        String,
-        String,
-        Option<i64>,
-        Option<i64>,
-        Option<DateTime<Utc>>,
-    ),
+    ImageOrMotionPhotoBaseUrl(String, String, i64, i64, DateTime<Utc>),
     // URL, filename, optional creation time
-    VideoBaseUrl(String, String, Option<DateTime<Utc>>),
-}
-
-/// Attributes of `MediaItem` to download
-#[derive(Clone, Debug)]
-pub enum MediaAttrBetter {
-    // URL, filename, width, height, optional creation time
-    _ImageOrMotionPhotoBaseUrl(String, String, i64, i64, DateTime<Utc>),
-    // URL, filename, optional creation time
-    _VideoBaseUrl(String, String, DateTime<Utc>),
+    VideoBaseUrl(String, String, DateTime<Utc>),
 }
 
 /// Collect attributes of `MediaItem`s to download and send on channel
@@ -157,11 +142,12 @@ fn select_from_list(
     let mut selection = Vec::<MediaAttr>::new();
     let mut next_page_token = response.next_page_token;
 
+    // TODO: Transform naive dates to Utc here!
+
     if let Some(items) = response.media_items {
         let mut total: u8 = 0;
         let mut selected_dt: u8 = 0;
         let mut skipped_dt: u8 = 0;
-        let mut no_dt: u8 = 0;
         let mut unexpected: u8 = 0;
 
         items.iter().for_each(|item| {
@@ -176,8 +162,12 @@ fn select_from_list(
                     media_metadata: Some(metadata),
                     mime_type: _,
                     product_url: _,
-                } => match metadata.creation_time {
-                    Some(creation_time) => {
+                } => match metadata {
+                    MediaMetadata {
+                        creation_time: Some(creation_time),
+                        ..
+                    } => {
+                        // Do creation time selection
                         let creation_date = creation_time.date_naive();
                         if from_date.is_some_and(|from_date| creation_date >= from_date)
                             && to_date.is_some_and(|to_date| creation_date <= to_date)
@@ -187,33 +177,44 @@ fn select_from_list(
                                 && from_date.is_some_and(|from_date| creation_date >= from_date))
                             || (from_date.is_none() && to_date.is_none())
                         {
-                            // Photos
-                            if metadata.photo.is_some() {
-                                selected_dt += 1; // Selected because within limits
-                                selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
-                                    url.to_string(),
-                                    filename.to_string(),
-                                    metadata.width,
-                                    metadata.height,
-                                    Some(creation_time),
-                                ));
+                            match metadata {
+                                MediaMetadata {
+                                    creation_time: _,
+                                    height: Some(height),
+                                    photo: Some(_),
+                                    video: None,
+                                    width: Some(width),
+                                } => {
+                                    selected_dt += 1;
+                                    selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
+                                        url.to_string(),
+                                        filename.to_string(),
+                                        width.to_owned(),
+                                        height.to_owned(),
+                                        creation_time.to_owned(),
+                                    ));
+                                }
+                                MediaMetadata {
+                                    creation_time: _,
+                                    height: _,
+                                    photo: None,
+                                    video: Some(_),
+                                    width: _,
+                                } => {
+                                    selected_dt += 1;
+                                    selection.push(MediaAttr::VideoBaseUrl(
+                                        url.to_string(),
+                                        filename.to_string(),
+                                        creation_time.to_owned(),
+                                    ));
+                                }
+                                _ => {
+                                    unexpected += 1;
+                                    warn!(
+                                        "Refused to match without some photo or video {metadata:?}"
+                                    );
+                                }
                             }
-                            // Video
-                            else if metadata.video.is_some() {
-                                selected_dt += 1; // Selected because within limits
-                                selection.push(MediaAttr::VideoBaseUrl(
-                                    url.to_string(),
-                                    filename.to_string(),
-                                    Some(creation_time),
-                                ));
-                            }
-                            // Don't know (which should't happen)
-                            else {
-                                unexpected += 1;
-                                warn!("Unexpected MediaItem: {item:?}");
-                            }
-
-                            // dbg!(&item);
                         } else {
                             skipped_dt += 1;
                             // End list!
@@ -222,106 +223,18 @@ fn select_from_list(
                             }
                         }
                     }
-                    None => {
-                        // Photos
-                        if metadata.photo.is_some() {
-                            no_dt += 1;
-                            selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
-                                url.to_string(),
-                                filename.to_string(),
-                                metadata.width,
-                                metadata.height,
-                                None,
-                            ));
-                        }
-                        // Video
-                        else if metadata.video.is_some() {
-                            no_dt += 1;
-                            selected_dt += 1; // Selected because within limits
-                            selection.push(MediaAttr::VideoBaseUrl(
-                                url.to_string(),
-                                filename.to_string(),
-                                None,
-                            ));
-                        }
-                        // Don't know (which should't happen)
-                        else {
-                            unexpected += 1;
-                            warn!("Unexpected (neither photo nor video) MediaItem: {item:?}");
-                        }
-
-                        // dbg!(&item);
-                        warn!("Found MediaItem without creation time: {item:?}");
+                    _ => {
+                        unexpected += 1;
+                        warn!("Refused to match without creation_time {metadata:?}");
                     }
                 },
                 _ => {
                     unexpected += 1;
-                    warn!("Unexpected (some attributes don't match) MediaItem: {item:?}");
+                    warn!("Refused to match without all of: base_url, filename, metadata {item:?}");
                 }
             }
         });
-        info!(
-            "Size: {total} selected: {} skip: {skipped_dt} warn: {unexpected}",
-            selected_dt + no_dt
-        );
-    }
-    (next_page_token, selection)
-}
-
-/// Handle pattern matching and time windows
-fn _select_from_list_better(
-    response: ListMediaItemsResponse,
-    _from_date: Option<NaiveDate>,
-    _to_date: Option<NaiveDate>,
-) -> (Option<String>, Vec<MediaAttrBetter>) {
-    let selection = Vec::<MediaAttrBetter>::new();
-    let next_page_token = response.next_page_token;
-
-    // TODO: Transform naive dates to Utc here!
-
-    if let Some(items) = response.media_items {
-        items.iter().for_each(|item| match item {
-            MediaItem {
-                base_url: Some(_url),
-                contributor_info: _,
-                description: _,
-                filename: Some(_filename),
-                id: _,
-                media_metadata: Some(metadata),
-                mime_type: _,
-                product_url: _,
-            } => match metadata {
-                MediaMetadata {
-                    creation_time: Some(_creation_time),
-                    ..
-                } => match metadata {
-                    // Do creation time selection
-                    MediaMetadata {
-                        creation_time: _,
-                        height: Some(_height),
-                        photo: Some(_),
-                        video: None,
-                        width: Some(_width),
-                    } => {}
-                    MediaMetadata {
-                        creation_time: _,
-                        height: None,
-                        photo: None,
-                        video: Some(_),
-                        width: None,
-                    } => {}
-                    _ => {
-                        warn!("Refused to match without some photo or video {metadata:?}");
-                    }
-                },
-                _ => {
-                    warn!("Refused to match without creation_time {metadata:?}");
-                }
-            },
-            _ => {
-                warn!("Refused to match without all of: base_url, filename, metadata {item:?}");
-            }
-        })
+        info!("Size: {total} selected: {selected_dt} skip: {skipped_dt} warn: {unexpected}");
     }
 
     (next_page_token, selection)

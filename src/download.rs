@@ -14,7 +14,7 @@ use tokio::{
     sync::mpsc,
     task::JoinHandle,
 };
-use tracing::{error, warn};
+use tracing::error;
 
 use crate::hub::MediaAttr;
 
@@ -30,18 +30,12 @@ pub async fn photos_to_disk(
         let mut handles = vec![];
 
         while let Some(item) = write_request.recv().await {
-            let _item_to_display = item.clone();
-
             // None for url in cases where image with or height are None
-            let (url, filename) = match item {
-                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, Some(width), Some(height), _) => {
-                    (url + &format!("=w{width}-h{height}"), name)
+            let (url, filename, creation_time) = match item {
+                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, width, height, ctime) => {
+                    (url + &format!("=w{width}-h{height}"), name, ctime)
                 }
-                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, _, _, _) => {
-                    warn!("No dimensions for {name} - thumnail downloaded");
-                    (url, name)
-                }
-                MediaAttr::VideoBaseUrl(url, name, _) => (url + "=dv", name),
+                MediaAttr::VideoBaseUrl(url, name, ctime) => (url + "=dv", name, ctime),
             };
             let mut path = download_dir.clone();
             let http_cli = client.clone();
@@ -49,9 +43,7 @@ pub async fn photos_to_disk(
             let write_thread: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
                 path.push(&filename);
                 if is_dry_run {
-                    println!("\"dry_run\",{path:?}");
-                    dbg!(url);
-                    // dbg!(_item_to_display);
+                    println!("dry_run,\"{creation_time}\",{path:?}");
                 } else {
                     let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
                     // dbg!(&res);
