@@ -1,8 +1,8 @@
-//! Selection of media files to process
+//! Selection of media files to download
 
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
-    api::{ListMediaItemsResponse, MediaItem},
+    api::{ListMediaItemsResponse, MediaItem, MediaMetadata},
     chrono::{DateTime, NaiveDate, Utc},
     hyper::client::HttpConnector,
     hyper_rustls::HttpsConnector,
@@ -11,8 +11,9 @@ use photoslibrary1::{
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+/// Attributes of `MediaItem` to download
 #[derive(Clone, Debug)]
-pub enum Selection {
+pub enum MediaAttr {
     // URL, filename, width, height, optional creation time
     ImageOrMotionPhotoBaseUrl(
         String,
@@ -25,9 +26,19 @@ pub enum Selection {
     VideoBaseUrl(String, String, Option<DateTime<Utc>>),
 }
 
+/// Attributes of `MediaItem` to download
+#[derive(Clone, Debug)]
+pub enum MediaAttrBetter {
+    // URL, filename, width, height, optional creation time
+    _ImageOrMotionPhotoBaseUrl(String, String, i64, i64, DateTime<Utc>),
+    // URL, filename, optional creation time
+    _VideoBaseUrl(String, String, DateTime<Utc>),
+}
+
+/// Collect attributes of `MediaItem`s to download and send on channel
 pub async fn select_media_and_send(
     hub: PhotosLibrary<HttpsConnector<HttpConnector>>,
-    transmit_to_write: mpsc::Sender<Selection>,
+    transmit_to_write: mpsc::Sender<MediaAttr>,
     from_date: Option<NaiveDate>,
     to_date: Option<NaiveDate>,
     batch_size: i32,
@@ -137,12 +148,13 @@ pub async fn select_media_and_send(
     Ok(())
 }
 
+/// Handle pattern matching and time windows
 fn select_from_list(
     response: ListMediaItemsResponse,
     from_date: Option<NaiveDate>,
     to_date: Option<NaiveDate>,
-) -> (Option<String>, Vec<Selection>) {
-    let mut selection = Vec::<Selection>::new();
+) -> (Option<String>, Vec<MediaAttr>) {
+    let mut selection = Vec::<MediaAttr>::new();
     let mut next_page_token = response.next_page_token;
 
     if let Some(items) = response.media_items {
@@ -178,7 +190,7 @@ fn select_from_list(
                             // Photos
                             if metadata.photo.is_some() {
                                 selected_dt += 1; // Selected because within limits
-                                selection.push(Selection::ImageOrMotionPhotoBaseUrl(
+                                selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
                                     url.to_string(),
                                     filename.to_string(),
                                     metadata.width,
@@ -189,7 +201,7 @@ fn select_from_list(
                             // Video
                             else if metadata.video.is_some() {
                                 selected_dt += 1; // Selected because within limits
-                                selection.push(Selection::VideoBaseUrl(
+                                selection.push(MediaAttr::VideoBaseUrl(
                                     url.to_string(),
                                     filename.to_string(),
                                     Some(creation_time),
@@ -214,7 +226,7 @@ fn select_from_list(
                         // Photos
                         if metadata.photo.is_some() {
                             no_dt += 1;
-                            selection.push(Selection::ImageOrMotionPhotoBaseUrl(
+                            selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
                                 url.to_string(),
                                 filename.to_string(),
                                 metadata.width,
@@ -226,7 +238,7 @@ fn select_from_list(
                         else if metadata.video.is_some() {
                             no_dt += 1;
                             selected_dt += 1; // Selected because within limits
-                            selection.push(Selection::VideoBaseUrl(
+                            selection.push(MediaAttr::VideoBaseUrl(
                                 url.to_string(),
                                 filename.to_string(),
                                 None,
@@ -253,5 +265,67 @@ fn select_from_list(
             selected_dt + no_dt
         );
     }
+    (next_page_token, selection)
+}
+
+/// Handle pattern matching and time windows
+fn _select_from_list_better(
+    response: ListMediaItemsResponse,
+    _from_date: Option<NaiveDate>,
+    _to_date: Option<NaiveDate>,
+) -> (Option<String>, Vec<MediaAttrBetter>) {
+    let selection = Vec::<MediaAttrBetter>::new();
+    let next_page_token = response.next_page_token;
+
+    // TODO: Transform naive dates to Utc here!
+
+    if let Some(items) = response.media_items {
+        items.iter().for_each(|item| match item {
+            MediaItem {
+                base_url: Some(_url),
+                contributor_info: _,
+                description: _,
+                filename: Some(_filename),
+                id: _,
+                media_metadata: Some(metadata),
+                mime_type: _,
+                product_url: _,
+            } => match metadata {
+                MediaMetadata {
+                    creation_time: Some(_creation_time),
+                    height: _,
+                    photo: _,
+                    video: _,
+                    width: _,
+                } => match metadata {
+                    // Do creation time selection
+                    MediaMetadata {
+                        creation_time: _,
+                        height: Some(_height),
+                        photo: Some(_),
+                        video: None,
+                        width: Some(_width),
+                    } => {}
+                    MediaMetadata {
+                        creation_time: _,
+                        height: None,
+                        photo: None,
+                        video: Some(_),
+                        width: None,
+                    } => {}
+                    _ => {
+                        warn!("Refused to match neither photo nor video {metadata:?}");
+                    }
+                },
+                _ => {
+                    warn!("Refused to match without creation_time {metadata:?}");
+                }
+            },
+            _ => {
+                warn!("Refused to match without all of: base_url, filename, metadata {item:?}");
+            }
+        })
+    }
+
     (next_page_token, selection)
 }

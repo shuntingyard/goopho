@@ -1,4 +1,4 @@
-//! What to describe here?
+//! A command line app to download images and videos from Google Photos
 
 use anyhow::{bail, Context};
 use google_photoslibrary1 as photoslibrary1;
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Channel to writers
-    let (transmit_to_write, write_request) = mpsc::channel::<hub::Selection>(QUEUE_DEPTH);
+    let (transmit_to_write, write_request) = mpsc::channel::<hub::MediaAttr>(QUEUE_DEPTH);
 
     // Set up the channel's receiving side for downloads and disk writes
     //  (Manages its own join handles internally)

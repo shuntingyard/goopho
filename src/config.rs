@@ -2,7 +2,7 @@
 
 use std::{ffi::OsString, path::PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context};
 use argh::FromArgs;
 use directories::BaseDirs;
 use google_photoslibrary1 as photoslibrary1;
@@ -42,7 +42,7 @@ pub struct Cmdlargs {
 }
 
 /// Provide `OsString` to a file inside user's local data directory
-pub fn get_token_store_path() -> Result<OsString> {
+pub fn get_token_store_path() -> anyhow::Result<OsString> {
     let mut _buf;
     let store;
     if let Some(base_dirs) = BaseDirs::new() {
@@ -58,7 +58,7 @@ pub fn get_token_store_path() -> Result<OsString> {
 }
 
 /// Extract application secret from Google's `client_secret.json` file
-pub async fn get_app_secret(path: PathBuf) -> Result<ApplicationSecret> {
+pub async fn get_app_secret(path: PathBuf) -> anyhow::Result<ApplicationSecret> {
     let client_secret = fs::read_to_string(path).await?;
     let secret: ConsoleApplicationSecret = serde_json::from_str(&client_secret)?;
     let app_secret = secret

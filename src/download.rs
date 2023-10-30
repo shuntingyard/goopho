@@ -16,10 +16,11 @@ use tokio::{
 };
 use tracing::{error, warn};
 
-use crate::hub::Selection;
+use crate::hub::MediaAttr;
 
+/// Spawn green threads to do the heavy lifting
 pub async fn photos_to_disk(
-    mut write_request: mpsc::Receiver<Selection>,
+    mut write_request: mpsc::Receiver<MediaAttr>,
     download_dir: PathBuf,
     client: hyper::Client<HttpsConnector<HttpConnector>>,
     is_dry_run: bool,
@@ -33,14 +34,14 @@ pub async fn photos_to_disk(
 
             // None for url in cases where image with or height are None
             let (url, filename) = match item {
-                Selection::ImageOrMotionPhotoBaseUrl(url, name, Some(width), Some(height), _) => {
+                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, Some(width), Some(height), _) => {
                     (url + &format!("=w{width}-h{height}"), name)
                 }
-                Selection::ImageOrMotionPhotoBaseUrl(url, name, _, _, _) => {
+                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, _, _, _) => {
                     warn!("No dimensions for {name} - thumnail downloaded");
                     (url, name)
                 }
-                Selection::VideoBaseUrl(url, name, _) => (url + "=dv", name),
+                MediaAttr::VideoBaseUrl(url, name, _) => (url + "=dv", name),
             };
             let mut path = download_dir.clone();
             let http_cli = client.clone();

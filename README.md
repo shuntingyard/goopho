@@ -35,3 +35,7 @@ This might easily work on other operating systems. It just has not been tested y
     However, we'll first try with base URLs retrieved with `list`.)
 - [x] Does `hub.media_items().list()` guarantee newest-first order?
 - [x] If so, break after oldest media file selected.
+- [ ] Test with DNS down
+- [ ] Test hub module while taking link down.
+- [ ] Test download module while taking link down.
+- [ ] Look at distorted pics. Do we happen to write more than once to some files?
