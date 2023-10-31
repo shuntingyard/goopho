@@ -14,7 +14,7 @@ opt-level = "z"
 anyhow = "1.0.75"
 argh = "0.1.12"
 async-recursion = "1.0.5"
-# console-subscriber = "0.2.0" # Use with `RUSTFLAGS="--cfg tokio_unstable"`
+console-subscriber = "0.2.0" # Use with `RUSTFLAGS="--cfg tokio_unstable"`
 directories = "5.0.1"
 futures = "0.3.29"
 google-photoslibrary1 = "*"

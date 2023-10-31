@@ -11,6 +11,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 mod config;
 mod download;
 mod hub;
+mod limited_dl;
 
 const BATCH_SIZE: i32 = 50;
 const QUEUE_DEPTH: usize = 10;
@@ -18,6 +19,7 @@ const QUEUE_DEPTH: usize = 10;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Subscribe to traces and progress indicator
+
     let indicatif_layer = IndicatifLayer::new();
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(indicatif_layer.get_stderr_writer()))
@@ -48,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
             .with_native_roots()
             .https_only()
             .enable_http1()
-            .enable_http2()
+            // .enable_http2()
             .build(),
     );
     let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -77,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Set up the channel's receiving side for downloads and disk writes
     //  (Manages its own join handles internally)
-    let writer = download::photos_to_disk(write_request, args.target, client, args.dry_run).await;
+    let writer = limited_dl::photos_to_disk(write_request, args.target, client, args.dry_run).await;
 
     // Start selecting media files to download
     hub::select_media_and_send(

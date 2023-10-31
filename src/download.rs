@@ -63,7 +63,7 @@ pub async fn photos_to_disk(
 /// Used with progress indicator
 #[instrument(name = "downloading", skip(http_cli, url))]
 #[async_recursion]
-async fn download_and_write(
+pub async fn download_and_write(
     http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
     url: String,
     path: PathBuf,
@@ -82,18 +82,8 @@ async fn download_and_write(
         StatusCode::FOUND => {
             if let Some(header) = res.headers().get("location") {
                 let location = header.to_str()?;
-
+                // Recursion
                 download_and_write(http_cli, location.to_string(), path).await?;
-                /*
-                let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
-                if res.status() == 200 {
-                    let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-                    while let Some(chunk) = res.body_mut().data().await {
-                        output.write_all(&chunk?).await?;
-                    }
-                    // eprintln!("Wrote {path:?}");
-                }
-                 */
             } else {
                 error!(
                     "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
