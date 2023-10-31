@@ -1,4 +1,4 @@
-//! Abstraction on configuration details
+//! Abstraction over configuration details
 
 use std::{ffi::OsString, path::PathBuf};
 

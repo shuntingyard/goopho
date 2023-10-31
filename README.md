@@ -2,6 +2,8 @@
 
 Media from Google Photos? Download all to your disk!
 
+![console demo](demo1.gif)
+
 Tested on Linux and Windows.
 
 ## How to Use?
