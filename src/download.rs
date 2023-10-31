@@ -2,10 +2,11 @@
 
 use std::{path::PathBuf, str::FromStr};
 
+use async_recursion::async_recursion;
 use futures::future;
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
-    hyper::{self, body::HttpBody, client::HttpConnector},
+    hyper::{self, body::HttpBody, client::HttpConnector, StatusCode},
     hyper_rustls::HttpsConnector,
 };
 use tokio::{
@@ -61,40 +62,49 @@ pub async fn photos_to_disk(
 
 /// Used with progress indicator
 #[instrument(name = "downloading", skip(http_cli, url))]
+#[async_recursion]
 async fn download_and_write(
     http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
     url: String,
     path: PathBuf,
 ) -> anyhow::Result<()> {
     let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
-    // dbg!(&res);
 
-    // Videos, 302?
-    if res.status() == 200 {
-        let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-        while let Some(chunk) = res.body_mut().data().await {
-            output.write_all(&chunk?).await?;
-        }
-        // eprintln!("Wrote photo {path:?}");
-    } else if res.status() == 302 {
-        if let Some(header) = res.headers().get("location") {
-            let location = header.to_str()?;
-            let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
-            if res.status() == 200 {
-                let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-                while let Some(chunk) = res.body_mut().data().await {
-                    output.write_all(&chunk?).await?;
-                }
-                // eprintln!("Wrote video {path:?}");
+    // Check HTTP status codes
+    match res.status() {
+        StatusCode::OK => {
+            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+            while let Some(chunk) = res.body_mut().data().await {
+                output.write_all(&chunk?).await?;
             }
-        } else {
-            error!(
-                "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
-                res.headers()
-            );
+            // eprintln!("Wrote {path:?}");
         }
-    } else {
-        error!("Got http {}", res.status());
+        StatusCode::FOUND => {
+            if let Some(header) = res.headers().get("location") {
+                let location = header.to_str()?;
+
+                download_and_write(http_cli, location.to_string(), path).await?;
+                /*
+                let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
+                if res.status() == 200 {
+                    let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+                    while let Some(chunk) = res.body_mut().data().await {
+                        output.write_all(&chunk?).await?;
+                    }
+                    // eprintln!("Wrote {path:?}");
+                }
+                 */
+            } else {
+                error!(
+                    "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
+                    res.headers()
+                );
+            }
+        }
+        // Catch all
+        _ => {
+            error!("Got HTTP {}", res.status());
+        }
     }
 
     Ok(())

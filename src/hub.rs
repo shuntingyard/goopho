@@ -184,7 +184,9 @@ fn select_from_list(
                 }
             }
         });
-        info!("Size: {total} selected: {selected_dt} skip: {skipped_dt} warn: {unexpected}");
+        info!(
+            "Size: {total:2} selected: {selected_dt:2} skip: {skipped_dt:2} warn: {unexpected:2}"
+        );
     }
 
     (next_page_token, selection)
