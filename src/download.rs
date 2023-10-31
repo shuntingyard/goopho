@@ -31,7 +31,6 @@ pub async fn photos_to_disk(
         let mut handles = vec![];
 
         while let Some(item) = write_request.recv().await {
-            // None for url in cases where image with or height are None
             let (url, filename, creation_time) = match item {
                 MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, width, height, ctime) => {
                     (url + &format!("=w{width}-h{height}"), name, ctime)
@@ -78,14 +77,21 @@ async fn download_and_write(
         }
         // eprintln!("Wrote photo {path:?}");
     } else if res.status() == 302 {
-        let location = res.headers().get("location").unwrap().to_str()?;
-        let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
-        if res.status() == 200 {
-            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
-            while let Some(chunk) = res.body_mut().data().await {
-                output.write_all(&chunk?).await?;
+        if let Some(header) = res.headers().get("location") {
+            let location = header.to_str()?;
+            let mut res = http_cli.get(hyper::Uri::from_str(location)?).await?;
+            if res.status() == 200 {
+                let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+                while let Some(chunk) = res.body_mut().data().await {
+                    output.write_all(&chunk?).await?;
+                }
+                // eprintln!("Wrote video {path:?}");
             }
-            // eprintln!("Wrote video {path:?}");
+        } else {
+            error!(
+                "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
+                res.headers()
+            );
         }
     } else {
         error!("Got http {}", res.status());

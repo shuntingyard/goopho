@@ -12,7 +12,7 @@ use photoslibrary1::{
 };
 use tokio::fs;
 
-/// This app's ommand line args
+/// This app's command line args
 #[derive(FromArgs, Debug)]
 /// Download images and videos from Google Photos
 pub struct Cmdlargs {

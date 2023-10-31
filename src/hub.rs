@@ -32,10 +32,10 @@ pub async fn select_media_and_send(
     let mut next_page_token: Option<String> = None;
     loop {
         // First list in batches
-        let result = if next_page_token.as_ref().is_some() {
+        let result = if let Some(token) = next_page_token.as_ref() {
             hub.media_items()
                 .list()
-                .page_token(&next_page_token.clone().unwrap())
+                .page_token(token)
                 .page_size(batch_size)
                 .doit()
                 .await
@@ -95,10 +95,10 @@ fn select_from_list(
     // TODO: Transform naive dates to Utc here!
 
     if let Some(items) = response.media_items {
-        let mut total: u8 = 0;
-        let mut selected_dt: u8 = 0;
-        let mut skipped_dt: u8 = 0;
-        let mut unexpected: u8 = 0;
+        let mut total = 0;
+        let mut selected_dt = 0;
+        let mut skipped_dt = 0;
+        let mut unexpected = 0;
 
         items.iter().for_each(|item| {
             total += 1;
@@ -126,7 +126,6 @@ fn select_from_list(
                             || (to_date.is_none()
                                 && from_date.is_some_and(|from_date| creation_date >= from_date))
                             || (from_date.is_none() && to_date.is_none())
-                        // Select all
                         {
                             match metadata {
                                 MediaMetadata {
