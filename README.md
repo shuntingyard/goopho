@@ -30,15 +30,16 @@ cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
 Remove-Item Env:\RUST_LOG
 ```
 
-Or if you want measure time elapsed in PowerShell, something like
+Or if you want to measure time elapsed in PowerShell, something like
 
-```
+```ps1
 Measure-Command { .\target\release\goopho -c client_secret.json E:\mediadir | Out-Default }
 ```
 
 will help.
 
-This might easily work on other operating systems. It just has not been tested yet.
+(Software in this repository might easily work on other operating systems.
+It just has not been tested so far.)
 
 ## Development TODOs
 
