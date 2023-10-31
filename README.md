@@ -28,7 +28,6 @@ Similarly on **Windows**:
 $Env:RUST_LOG="info"
 cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
 Remove-Item Env:\RUST_LOG
-...
 ```
 
 This might easily work on other operating systems. It just has not been tested yet.
@@ -47,4 +46,4 @@ This might easily work on other operating systems. It just has not been tested y
 - [ ] Test hub module while taking link down.
 - [ ] Test download module while taking link down.
 - [ ] Optionally download Motion GIFs as videos?
-- [ ] asciinema sample?
+- [x] asciinema sample?
