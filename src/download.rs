@@ -3,7 +3,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use async_recursion::async_recursion;
-use futures::future;
+use futures::{self, future, StreamExt};
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
     hyper::{self, body::HttpBody, client::HttpConnector, StatusCode},
@@ -60,10 +60,50 @@ pub async fn photos_to_disk(
     })
 }
 
+// Spawn green threads with some control over concurrency (experimental)
+pub async fn photos_to_disk_buf_unord(
+    mut write_request: mpsc::Receiver<MediaAttr>,
+    download_dir: PathBuf,
+    client: hyper::Client<HttpsConnector<HttpConnector>>,
+    is_dry_run: bool,
+) -> JoinHandle<anyhow::Result<()>> {
+    // Schedule downloads and disk writes
+    tokio::spawn(async move {
+        let mut media_items = Vec::<MediaAttr>::new();
+        while let Some(item) = write_request.recv().await {
+            media_items.push(item);
+        }
+        let fetches = futures::stream::iter(media_items.into_iter().map(|item| {
+            let (url, filename, creation_time) = match item {
+                MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, width, height, ctime) => {
+                    (url + &format!("=w{width}-h{height}"), name, ctime)
+                }
+                MediaAttr::VideoBaseUrl(url, name, ctime) => (url + "=dv", name, ctime),
+            };
+            let mut path = download_dir.clone();
+            let http_cli = client.clone();
+
+            async move {
+                path.push(&filename);
+                if is_dry_run {
+                    println!("dry_run,\"{creation_time}\",{path:?}");
+                    Ok(())
+                } else {
+                    download_and_write(http_cli, url, path).await
+                }
+            }
+        }))
+        .buffer_unordered(20)
+        .collect::<Vec<anyhow::Result<()>>>();
+
+        fetches.await;
+        Ok(())
+    })
+}
 /// Used with progress indicator
 #[instrument(name = "downloading", skip(http_cli, url))]
 #[async_recursion]
-pub async fn download_and_write(
+async fn download_and_write(
     http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
     url: String,
     path: PathBuf,
@@ -77,6 +117,7 @@ pub async fn download_and_write(
             while let Some(chunk) = res.body_mut().data().await {
                 output.write_all(&chunk?).await?;
             }
+            output.flush().await?;
             // eprintln!("Wrote {path:?}");
         }
         StatusCode::FOUND => {

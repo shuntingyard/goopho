@@ -11,7 +11,6 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 mod config;
 mod download;
 mod hub;
-mod limited_dl;
 
 const BATCH_SIZE: i32 = 50;
 const QUEUE_DEPTH: usize = 10;
@@ -79,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Set up the channel's receiving side for downloads and disk writes
     //  (Manages its own join handles internally)
-    let writer = limited_dl::photos_to_disk(write_request, args.target, client, args.dry_run).await;
+    let writer = download::photos_to_disk(write_request, args.target, client, args.dry_run).await;
 
     // Start selecting media files to download
     hub::select_media_and_send(

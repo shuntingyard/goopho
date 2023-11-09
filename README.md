@@ -48,7 +48,8 @@ It just has not been tested so far.)
     prefectly valid `base_url`s.)
 - [x] Does `hub.media_items().list()` guarantee newest-first order?
 - [x] If so, break after oldest media file selected.
-- [ ] Look at distorted pics. Do we happen to write more than once to some files?
+- [ ] Look at distorted pics: sha1 reproducible across runs...
+- [ ] Duplicate file names?
 - [ ] Use [rust-binary-action](https://github.com/marketplace/actions/build-and-upload-rust-binary-to-github-releases)
     on releases?
 - [ ] Test with DNS down
