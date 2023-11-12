@@ -17,7 +17,7 @@ Currently you need to:
 Then on **Linux** run someting like
 
 ```bash
-time RUST_LOG=info cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
+time RUST_LOG=info cargo run -q -- -c client_secret.json --from-date 2023-10-23 mediadir
 ```
 
 inside the directory you just cloned from Github.
@@ -26,7 +26,7 @@ Similarly on **Windows**:
 
 ```ps1
 $Env:RUST_LOG="info"
-cargo run -- -c client_secret.json --from-date 2023-10-23 mediadir
+cargo run -q -- -c client_secret.json --from-date 2023-10-23 mediadir
 Remove-Item Env:\RUST_LOG
 ```
 

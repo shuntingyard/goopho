@@ -20,6 +20,8 @@ use tracing::instrument;
 
 use crate::hub::MediaAttr;
 
+const IN_PROGRESS_SUFFIX: &str = ".chunks";
+
 /// Spawn green threads to do the heavy lifting
 pub async fn photos_to_disk(
     mut write_request: mpsc::Receiver<MediaAttr>,
@@ -113,11 +115,13 @@ async fn download_and_write(
     // Check HTTP status codes
     match res.status() {
         StatusCode::OK => {
-            let mut output = io::BufWriter::new(fs::File::create(&path).await?);
+            let chunks = path.to_string_lossy().to_string() + IN_PROGRESS_SUFFIX;
+            let mut output = io::BufWriter::new(fs::File::create(&chunks).await?);
             while let Some(chunk) = res.body_mut().data().await {
                 output.write_all(&chunk?).await?;
             }
             output.flush().await?;
+            fs::rename(&chunks, &path).await?;
             // eprintln!("Wrote {path:?}");
         }
         StatusCode::FOUND => {
