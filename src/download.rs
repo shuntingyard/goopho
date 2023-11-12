@@ -1,6 +1,6 @@
 //! Handling of (potentially massive) asynchronous downloads and disk writes
 
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use async_recursion::async_recursion;
 use futures::{self, future, StreamExt};
@@ -15,8 +15,8 @@ use tokio::{
     sync::mpsc,
     task::JoinHandle,
 };
-use tracing::error;
 use tracing::instrument;
+use tracing::{error, warn};
 
 use crate::hub::MediaAttr;
 
@@ -118,12 +118,39 @@ async fn download_and_write(
         StatusCode::OK => {
             let chunks_written = path.to_string_lossy().to_string() + IN_PROGRESS_SUFFIX;
             let mut outfile = io::BufWriter::new(fs::File::create(&chunks_written).await?);
+            let mut timeouts: u8 = 0;
+            let mut completed = false;
 
-            while let Some(chunk) = res.body_mut().data().await {
+            let body = res.body_mut();
+            loop {
+                let chunk =
+                    match tokio::time::timeout(Duration::from_millis(5000), body.data()).await {
+                        Ok(next) => {
+                            if let Some(chunk) = next {
+                                chunk
+                            } else {
+                                completed = true;
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            timeouts += 1;
+                            if timeouts.rem_euclid(60u8) == 0 {
+                                error!("{chunks_written} incomplete, gave up...");
+                                break;
+                            } else if timeouts.rem_euclid(20u8) == 0 {
+                                warn!("{chunks_written} timed out {timeouts} times...");
+                            }
+                            continue;
+                        }
+                    };
                 outfile.write_all(&chunk?).await?;
             }
+
             outfile.flush().await?;
-            fs::rename(&chunks_written, &path).await?;
+            if completed {
+                fs::rename(&chunks_written, &path).await?;
+            }
             // eprintln!("Wrote {path:?}");
         }
         StatusCode::FOUND => {
