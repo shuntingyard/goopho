@@ -102,6 +102,7 @@ pub async fn photos_to_disk_buf_unord(
         Ok(())
     })
 }
+
 /// Used with progress indicator
 #[instrument(name = "downloading", skip(http_cli, url))]
 #[async_recursion]
@@ -115,13 +116,14 @@ async fn download_and_write(
     // Check HTTP status codes
     match res.status() {
         StatusCode::OK => {
-            let chunks = path.to_string_lossy().to_string() + IN_PROGRESS_SUFFIX;
-            let mut output = io::BufWriter::new(fs::File::create(&chunks).await?);
+            let chunks_written = path.to_string_lossy().to_string() + IN_PROGRESS_SUFFIX;
+            let mut outfile = io::BufWriter::new(fs::File::create(&chunks_written).await?);
+
             while let Some(chunk) = res.body_mut().data().await {
-                output.write_all(&chunk?).await?;
+                outfile.write_all(&chunk?).await?;
             }
-            output.flush().await?;
-            fs::rename(&chunks, &path).await?;
+            outfile.flush().await?;
+            fs::rename(&chunks_written, &path).await?;
             // eprintln!("Wrote {path:?}");
         }
         StatusCode::FOUND => {
