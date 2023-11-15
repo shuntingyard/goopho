@@ -18,6 +18,7 @@ pub enum Event {
     Retrying(String, u8),
     RetryAfter(String, u64),
     Failed(String),
+    FailedHttp(String, String),
     Completed,
     Summarize,
 }
@@ -48,6 +49,10 @@ pub async fn track_events(mut events: mpsc::Receiver<Event>) -> tokio::task::Joi
                 Event::Failed(file) => {
                     mem._failed += 1;
                     error!("Givin' up on {file} ...")
+                }
+                Event::FailedHttp(file, code) => {
+                    mem._failed += 1;
+                    error!("HTTP {code} on {file}")
                 }
                 Event::Completed => mem._completed += 1,
                 Event::Summarize => {

@@ -56,6 +56,7 @@ pub async fn photos_to_disk(
                 if is_dry_run {
                     println!("dry_run,\"{creation_time}\",{path:?}");
                 } else {
+                    track_and_log.send(Event::New).await?;
                     download_and_write(http_cli, url, path, track_and_log, sleep_seed).await?;
                 }
 
@@ -105,6 +106,7 @@ pub async fn photos_to_disk_unordered(
                     println!("dry_run,\"{creation_time}\",{path:?}");
                     Ok(())
                 } else {
+                    track_and_log.send(Event::New).await?;
                     download_and_write(http_cli, url, path, track_and_log, sleep_seed).await
                 }
             }
@@ -118,7 +120,7 @@ pub async fn photos_to_disk_unordered(
 }
 
 /// Used with progress indicator
-#[instrument(name = "downloading", skip(http_cli, url, track_and_log))]
+#[instrument(name = "downloading", skip(http_cli, url, track_and_log, sleep_seed))]
 #[async_recursion]
 async fn download_and_write(
     http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
@@ -127,8 +129,6 @@ async fn download_and_write(
     track_and_log: mpsc::Sender<Event>,
     sleep_seed: u64,
 ) -> anyhow::Result<()> {
-    track_and_log.send(Event::New).await?;
-
     let uri = hyper::Uri::from_str(&url)?;
 
     // Timeout/retry
@@ -217,11 +217,13 @@ async fn download_and_write(
                     "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
                     res.headers()
                 );
+                track_and_log.send(Event::Failed(path.to_string_lossy().to_string())).await?;
             }
         }
         // Catch all
         _ => {
             error!("Got HTTP {}", res.status());
+            track_and_log.send(Event::FailedHttp(path.to_string_lossy().to_string(), res.status())).await?;
         }
     }
 
