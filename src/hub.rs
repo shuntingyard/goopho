@@ -1,5 +1,7 @@
 //! Selection of media files to download
 
+use std::collections::HashMap;
+
 use google_photoslibrary1 as photoslibrary1;
 use photoslibrary1::{
     api::{ListMediaItemsResponse, MediaItem, MediaMetadata},
@@ -12,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 /// Attributes of `MediaItem` to download
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum MediaAttr {
     // URL, filename, width, height, creation time
     ImageOrMotionPhotoBaseUrl(String, String, i64, i64, DateTime<Utc>),
@@ -30,6 +32,8 @@ pub async fn select_media_and_send(
 ) -> anyhow::Result<()> {
     // Loop through Google Photos
     let mut next_page_token: Option<String> = None;
+    let mut filenames: HashMap<String, u16> = HashMap::new();
+
     loop {
         // First list in batches
         let result = if let Some(token) = next_page_token.as_ref() {
@@ -63,8 +67,12 @@ pub async fn select_media_and_send(
                 if !response.status().is_success() {
                     error!("HTTP Not Ok {}...", response.status());
                 } else {
-                    let (token_returned, selection) =
-                        select_from_list(list_media_items_response, from_date, to_date);
+                    let (token_returned, selection) = select_from_list(
+                        list_media_items_response,
+                        from_date,
+                        to_date,
+                        &mut filenames,
+                    );
 
                     next_page_token = token_returned;
                     for item in selection {
@@ -88,6 +96,7 @@ fn select_from_list(
     response: ListMediaItemsResponse,
     from_date: Option<NaiveDate>,
     to_date: Option<NaiveDate>,
+    filenames: &mut HashMap<String, u16>,
 ) -> (Option<String>, Vec<MediaAttr>) {
     let mut selection = Vec::<MediaAttr>::new();
     let mut next_page_token = response.next_page_token;
@@ -136,9 +145,18 @@ fn select_from_list(
                                     width: Some(width),
                                 } => {
                                     selected_dt += 1;
+
+                                    let unique_name: String;
+                                    if let Some(v) = filenames.get_mut(filename) {
+                                        *v += 1;
+                                        unique_name = format!("goo_{v}_{filename}");
+                                    } else {
+                                        filenames.insert(filename.to_string(), 0);
+                                        unique_name = filename.to_string();
+                                    }
                                     selection.push(MediaAttr::ImageOrMotionPhotoBaseUrl(
                                         url.to_string(),
-                                        filename.to_string(),
+                                        unique_name,
                                         width.to_owned(),
                                         height.to_owned(),
                                         creation_time.to_owned(),
@@ -152,9 +170,18 @@ fn select_from_list(
                                     width: _,
                                 } => {
                                     selected_dt += 1;
+
+                                    let unique_name: String;
+                                    if let Some(v) = filenames.get_mut(filename) {
+                                        *v += 1;
+                                        unique_name = format!("goo_{v}_{filename}");
+                                    } else {
+                                        filenames.insert(filename.to_string(), 0);
+                                        unique_name = filename.to_string();
+                                    }
                                     selection.push(MediaAttr::VideoBaseUrl(
                                         url.to_string(),
-                                        filename.to_string(),
+                                        unique_name,
                                         creation_time.to_owned(),
                                     ));
                                 }

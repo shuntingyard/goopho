@@ -8,6 +8,7 @@ use tracing::{debug, info};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+mod acc;
 mod config;
 mod download;
 mod hub;
@@ -49,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
             .with_native_roots()
             .https_only()
             .enable_http1()
-            // .enable_http2()
+            .enable_http2()
             .build(),
     );
     let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -66,19 +67,41 @@ async fn main() -> anyhow::Result<()> {
     let hub = PhotosLibrary::new(client.clone(), auth);
 
     // See about the target directory
-    //  TODO: Only run  this code before actually writing
+    //  TODO: Only run this code before actually writing.
     if fs::metadata(&args.target).await.is_ok() {
         bail!("Target dir exists");
     } else if !args.dry_run {
         fs::create_dir(&args.target).await?;
     }
 
+    // Setup for accounting
+    let (track_and_log, events) = mpsc::channel::<acc::Event>(128);
+    let accountant = acc::track_events(events).await;
+
     // Channel to writers
     let (transmit_to_write, write_request) = mpsc::channel::<hub::MediaAttr>(QUEUE_DEPTH);
 
     // Set up the channel's receiving side for downloads and disk writes
     //  (Manages its own join handles internally)
-    let writer = download::photos_to_disk(write_request, args.target, client, args.dry_run).await;
+    let writer = if args.unordered {
+        download::photos_to_disk_unordered(
+            write_request,
+            track_and_log.clone(),
+            args.target,
+            client,
+            args.dry_run,
+        )
+        .await
+    } else {
+        download::photos_to_disk(
+            write_request,
+            track_and_log.clone(),
+            args.target,
+            client,
+            args.dry_run,
+        )
+        .await
+    };
 
     // Start selecting media files to download
     hub::select_media_and_send(
@@ -93,5 +116,10 @@ async fn main() -> anyhow::Result<()> {
     // Be patient, don't quit
     //  (?? is for propagating outer as well as inner results)
     writer.await??;
+
+    // Ask for summary
+    track_and_log.send(acc::Event::Summarize).await?;
+    accountant.await?;
+
     Ok(())
 }

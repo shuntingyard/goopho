@@ -613,6 +613,7 @@ dependencies = [
  "directories",
  "futures",
  "google-photoslibrary1",
+ "rand",
  "serde_json",
  "tokio",
  "tracing",

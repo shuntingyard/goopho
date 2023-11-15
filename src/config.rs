@@ -41,6 +41,10 @@ pub struct Cmdlargs {
     /// target folder (must *not* exist)
     #[argh(positional)]
     pub target: PathBuf,
+
+    /// don't force processing to be FIFO
+    #[argh(switch, short = 'u')]
+    pub unordered: bool,
 }
 
 /// Provide `OsString` to a file inside user's local data directory

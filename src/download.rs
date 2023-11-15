@@ -9,22 +9,25 @@ use photoslibrary1::{
     hyper::{self, body::HttpBody, client::HttpConnector, StatusCode},
     hyper_rustls::HttpsConnector,
 };
+use rand::Rng;
 use tokio::{
     fs,
     io::{self, AsyncWriteExt},
     sync::mpsc,
     task::JoinHandle,
 };
+use tracing::error;
 use tracing::instrument;
-use tracing::{error, warn};
 
-use crate::hub::MediaAttr;
+use crate::{acc::Event, hub::MediaAttr};
 
 const IN_PROGRESS_SUFFIX: &str = ".chunks";
+const TIMEOUT_MS: u64 = 3000;
 
 /// Spawn green threads to do the heavy lifting
 pub async fn photos_to_disk(
     mut write_request: mpsc::Receiver<MediaAttr>,
+    track_and_log: mpsc::Sender<Event>,
     download_dir: PathBuf,
     client: hyper::Client<HttpsConnector<HttpConnector>>,
     is_dry_run: bool,
@@ -40,15 +43,20 @@ pub async fn photos_to_disk(
                 }
                 MediaAttr::VideoBaseUrl(url, name, ctime) => (url + "=dv", name, ctime),
             };
+
+            // TODO: Prepare this just before you're really about to download.
             let mut path = download_dir.clone();
             let http_cli = client.clone();
+            let track_and_log = track_and_log.clone();
+            let mut rng = rand::thread_rng();
+            let sleep_seed = rng.gen_range(TIMEOUT_MS..(TIMEOUT_MS + TIMEOUT_MS / 2));
 
             let write_thread: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
                 path.push(&filename);
                 if is_dry_run {
                     println!("dry_run,\"{creation_time}\",{path:?}");
                 } else {
-                    download_and_write(http_cli, url, path).await?;
+                    download_and_write(http_cli, url, path, track_and_log, sleep_seed).await?;
                 }
 
                 Ok(())
@@ -62,9 +70,10 @@ pub async fn photos_to_disk(
     })
 }
 
-// Spawn green threads with some control over concurrency (experimental)
-pub async fn photos_to_disk_buf_unord(
+/// Spawn green threads with some control over concurrency (experimental)
+pub async fn photos_to_disk_unordered(
     mut write_request: mpsc::Receiver<MediaAttr>,
+    track_and_log: mpsc::Sender<Event>,
     download_dir: PathBuf,
     client: hyper::Client<HttpsConnector<HttpConnector>>,
     is_dry_run: bool,
@@ -82,8 +91,13 @@ pub async fn photos_to_disk_buf_unord(
                 }
                 MediaAttr::VideoBaseUrl(url, name, ctime) => (url + "=dv", name, ctime),
             };
+
+            // TODO: Prepare this just before you're really about to download.
             let mut path = download_dir.clone();
             let http_cli = client.clone();
+            let track_and_log = track_and_log.clone();
+            let mut rng = rand::thread_rng();
+            let sleep_seed = rng.gen_range(TIMEOUT_MS..(TIMEOUT_MS + TIMEOUT_MS / 2));
 
             async move {
                 path.push(&filename);
@@ -91,11 +105,11 @@ pub async fn photos_to_disk_buf_unord(
                     println!("dry_run,\"{creation_time}\",{path:?}");
                     Ok(())
                 } else {
-                    download_and_write(http_cli, url, path).await
+                    download_and_write(http_cli, url, path, track_and_log, sleep_seed).await
                 }
             }
         }))
-        .buffer_unordered(20)
+        .buffer_unordered(100)
         .collect::<Vec<anyhow::Result<()>>>();
 
         fetches.await;
@@ -104,14 +118,42 @@ pub async fn photos_to_disk_buf_unord(
 }
 
 /// Used with progress indicator
-#[instrument(name = "downloading", skip(http_cli, url))]
+#[instrument(name = "downloading", skip(http_cli, url, track_and_log))]
 #[async_recursion]
 async fn download_and_write(
     http_cli: hyper::Client<HttpsConnector<HttpConnector>>,
     url: String,
     path: PathBuf,
+    track_and_log: mpsc::Sender<Event>,
+    sleep_seed: u64,
 ) -> anyhow::Result<()> {
-    let mut res = http_cli.get(hyper::Uri::from_str(&url)?).await?;
+    track_and_log.send(Event::New).await?;
+
+    let uri = hyper::Uri::from_str(&url)?;
+
+    // Timeout/retry
+    let mut pause_ms = sleep_seed;
+
+    let mut res;
+    loop {
+        match tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), http_cli.get(uri.clone()))
+            .await
+        {
+            Ok(response) => {
+                res = response.unwrap(); // TODO: Handle connection resets from here.
+                break;
+            }
+            Err(_) => {
+                // Timeout branch
+                track_and_log
+                    .send(Event::RetryAfter(url.clone(), pause_ms))
+                    .await?;
+                tokio::time::sleep(Duration::from_millis(pause_ms)).await;
+                pause_ms *= 2;
+                continue;
+            }
+        }
+    }
 
     // Check HTTP status codes
     match res.status() {
@@ -136,10 +178,14 @@ async fn download_and_write(
                         Err(_) => {
                             timeouts += 1;
                             if timeouts.rem_euclid(60u8) == 0 {
-                                error!("{chunks_written} incomplete, gave up...");
+                                track_and_log
+                                    .send(Event::Failed(chunks_written.clone()))
+                                    .await?;
                                 break;
                             } else if timeouts.rem_euclid(20u8) == 0 {
-                                warn!("{chunks_written} timed out {timeouts} times...");
+                                track_and_log
+                                    .send(Event::Retrying(chunks_written.clone(), timeouts))
+                                    .await?;
                             }
                             continue;
                         }
@@ -150,6 +196,7 @@ async fn download_and_write(
             outfile.flush().await?;
             if completed {
                 fs::rename(&chunks_written, &path).await?;
+                track_and_log.send(Event::Completed).await?;
             }
             // eprintln!("Wrote {path:?}");
         }
@@ -157,7 +204,14 @@ async fn download_and_write(
             if let Some(header) = res.headers().get("location") {
                 let location = header.to_str()?;
                 // Recursion
-                download_and_write(http_cli, location.to_string(), path).await?;
+                download_and_write(
+                    http_cli,
+                    location.to_string(),
+                    path,
+                    track_and_log.clone(),
+                    pause_ms,
+                )
+                .await?;
             } else {
                 error!(
                     "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",

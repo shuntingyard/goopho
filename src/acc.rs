@@ -11,11 +11,6 @@ pub struct _ToProcess {
     ids: Arc<Mutex<HashSet<String>>>,
 }
 
-/// Set to assure filenames are unique
-pub struct _ToDisambiguate {
-    filenames: HashSet<String>,
-}
-
 /// Events to track
 #[derive(Clone)]
 pub enum Event {
