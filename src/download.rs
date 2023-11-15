@@ -213,17 +213,20 @@ async fn download_and_write(
                 )
                 .await?;
             } else {
-                error!(
-                    "{path:?} not downloaded - couldn't get location after HTTP 302, headers: {:?}",
-                    res.headers()
-                );
-                track_and_log.send(Event::Failed(path.to_string_lossy().to_string())).await?;
+                // When location in 302 was invalid:
+                track_and_log
+                    .send(Event::Failed(path.to_string_lossy().to_string()))
+                    .await?;
             }
         }
         // Catch all
         _ => {
-            error!("Got HTTP {}", res.status());
-            track_and_log.send(Event::FailedHttp(path.to_string_lossy().to_string(), res.status())).await?;
+            track_and_log
+                .send(Event::FailedHttp(
+                    path.to_string_lossy().to_string(),
+                    res.status().to_string(),
+                ))
+                .await?;
         }
     }
 
