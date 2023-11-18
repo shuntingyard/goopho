@@ -16,7 +16,6 @@ use tokio::{
     sync::mpsc,
     task::JoinHandle,
 };
-use tracing::error;
 use tracing::instrument;
 
 use crate::{acc::Event, hub::MediaAttr};
@@ -39,7 +38,8 @@ pub async fn photos_to_disk(
         while let Some(item) = write_request.recv().await {
             let (url, filename, creation_time) = match item {
                 MediaAttr::ImageOrMotionPhotoBaseUrl(url, name, width, height, ctime) => {
-                    (url + &format!("=w{width}-h{height}"), name, ctime)
+                    // (url + &format!("=w{width}-h{height}"), name, ctime)
+                    (url + "=d", name, ctime)
                 }
                 MediaAttr::VideoBaseUrl(url, name, ctime) => (url + "=dv", name, ctime),
             };
