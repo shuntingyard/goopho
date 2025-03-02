@@ -14,7 +14,7 @@ Currently you need to:
 - make sure you have Rust/cargo available, e.g. [install](https://www.rust-lang.org/)
 - and define your own Google app with scope `https://www.googleapis.com/auth/photoslibrary.readonly`.
 
-Then on **Linux** run someting like
+Then on **Linux** run something like
 
 ```bash
 time RUST_LOG=info cargo run -q -- -c client_secret.json --from-date 2023-10-23 mediadir
